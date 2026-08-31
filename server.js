@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const connectDB = require("./config/db");
 
 const authRoutes = require("./routes/authRoutes");
+const auctionRoutes = require("./routes/auctionRoutes");
 
 //Load evironment variables
 dotenv.config();
@@ -17,6 +18,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
+app.use("/api/auctions", auctionRoutes);
 
 //Test Route
 app.get("/", (req, res) => {
