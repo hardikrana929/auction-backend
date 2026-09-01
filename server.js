@@ -6,6 +6,7 @@ const connectDB = require("./config/db");
 
 const authRoutes = require("./routes/authRoutes");
 const auctionRoutes = require("./routes/auctionRoutes");
+const teamRoutes = require("./routes/teamRoutes");
 
 //Load evironment variables
 dotenv.config();
@@ -19,6 +20,7 @@ app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api/auctions", auctionRoutes);
+app.use("/api/teams", teamRoutes);
 
 //Test Route
 app.get("/", (req, res) => {
