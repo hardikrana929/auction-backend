@@ -7,6 +7,8 @@ const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const auctionRoutes = require("./routes/auctionRoutes");
 const teamRoutes = require("./routes/teamRoutes");
+const playerRoutes = require("./routes/playerRoutes");
+const biddingRoutes = require("./routes/biddingRoutes");
 
 //Load evironment variables
 dotenv.config();
@@ -17,10 +19,13 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }))
 
 app.use("/api/auth", authRoutes);
 app.use("/api/auctions", auctionRoutes);
 app.use("/api/teams", teamRoutes);
+app.use("/api/players", playerRoutes);
+app.use("/api/bidding", biddingRoutes);
 
 //Test Route
 app.get("/", (req, res) => {
