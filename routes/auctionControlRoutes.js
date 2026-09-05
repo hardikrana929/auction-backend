@@ -7,6 +7,7 @@ const {
     getAuctionSession,
     startNextPlayer,
     completeCurrentPlayer,
+    completeAuction,
 } = require("../controllers/auctionControlController");
 
 const {
@@ -61,6 +62,13 @@ router.post(
     protectRoute,
     adminOnly,
     completeCurrentPlayer
+);
+
+router.post(
+    "/complete",
+    protectRoute,
+    adminOnly,
+    completeAuction
 );
 
 module.exports = router;

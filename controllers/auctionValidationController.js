@@ -167,12 +167,7 @@ const validatePlayerAuction = async (req, res) => {
         }
 
         // Auction status
-        if (
-            player.auction &&
-            !["draft", "upcoming", "live"].includes(
-                player.auction.status
-            )
-        ) {
+        if (player.auction && !["draft", "upcoming", "live"].includes(player.auction.status)) {
             errors.push(
                 `Auction is currently "${player.auction.status}"`
             );
@@ -368,9 +363,7 @@ const validateTeamPurchase = async (req, res) => {
     try {
         const { teamId, playerId } = req.params;
 
-        const team = await Team.findById(teamId).populate(
-            "auction"
-        );
+        const team = await Team.findById(teamId).populate("auction");
 
         if (!team) {
             return res.status(404).json({
@@ -390,10 +383,7 @@ const validateTeamPurchase = async (req, res) => {
 
         const errors = [];
 
-        if (
-            player.auction.toString() !==
-            team.auction._id.toString()
-        ) {
+        if (player.auction.toString() !== team.auction._id.toString()) {
             errors.push(
                 "Player and team belong to different auctions"
             );
@@ -405,20 +395,13 @@ const validateTeamPurchase = async (req, res) => {
             );
         }
 
-        if (
-            team.players.length >=
-            team.auction.maxPlayersPerTeam
-        ) {
+        if (team.players.length >= team.auction.maxPlayersPerTeam) {
             errors.push(
                 `Team has reached maximum player limit of ${team.auction.maxPlayersPerTeam}`
             );
         }
 
-        if (
-            player.currentBidder &&
-            player.currentBidder.toString() !==
-            team._id.toString()
-        ) {
+        if (player.currentBidder && player.currentBidder.toString() !== team._id.toString()) {
             errors.push(
                 "Team is not the current highest bidder"
             );

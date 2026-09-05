@@ -16,11 +16,7 @@ const {
 
 const router = express.Router();
 
-
-// ======================================================
 // GET ALL TEAMS OF AUCTION
-// ======================================================
-
 router.get(
     "/auction/:auctionId",
     protectRoute,

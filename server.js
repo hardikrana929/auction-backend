@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");
+
 const cors = require("cors");
 const dotenv = require("dotenv");
 
@@ -14,6 +16,13 @@ const auctionStatsRoutes = require("./routes/auctionStatsRoutes");
 const auctionHistoryRoutes = require("./routes/auctionHistoryRoutes");
 const auctionRegistrationRoutes = require("./routes/auctionRegistrationRoutes");
 const auctionValidationRoutes = require("./routes/auctionValidationRoutes");
+const auctionNotificationRoutes = require("./routes/auctionNotificationRoutes");
+const auctionAccessRoutes = require("./routes/auctionAccessRoutes");
+
+const notFound = require("./middleware/notFoundMiddleware");
+const errorHandler = require("./middleware/errorMiddleware");
+
+const initializeSocket = require("./socket/socketServer");
 
 //Load evironment variables
 dotenv.config();
@@ -21,6 +30,8 @@ dotenv.config();
 connectDB();
 
 const app = express();
+
+const server = http.createServer(app);
 
 app.use(cors());
 app.use(express.json());
@@ -36,6 +47,22 @@ app.use("/api/auction-stats", auctionStatsRoutes)
 app.use("/api/auction-history", auctionHistoryRoutes);
 app.use("/api/auction-registration", auctionRegistrationRoutes);
 app.use("/api/auction-validation", auctionValidationRoutes);
+app.use("/api/auction-notification", auctionNotificationRoutes);
+app.use("/api/auction-access", auctionAccessRoutes);
+
+// 404 handler
+app.use(notFound);
+
+// Global error handler
+app.use(errorHandler);
+
+//Socket.IO initialization
+const io = initializeSocket(
+    server,
+    process.env.CLIENT_URL || "*"
+);
+
+app.set("io", io);
 
 //Test Route
 app.get("/", (req, res) => {
@@ -47,7 +74,7 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log('Server running successful...');
 })
 
