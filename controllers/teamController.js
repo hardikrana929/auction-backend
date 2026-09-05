@@ -100,6 +100,7 @@ const createTeam = async (req, res) => {
 
             players: [],
             status: "active",
+            owner: req.user._id,
         });
 
 
@@ -450,7 +451,7 @@ const deleteTeam = async (req, res) => {
 
 
         await team.deleteOne();
-        
+
         res.status(200).json({
             success: true,
             message: "Team deleted successfully",

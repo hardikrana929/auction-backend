@@ -50,6 +50,14 @@ app.use("/api/auction-validation", auctionValidationRoutes);
 app.use("/api/auction-notification", auctionNotificationRoutes);
 app.use("/api/auction-access", auctionAccessRoutes);
 
+//Test Route
+app.get("/", (req, res) => {
+    res.json({
+        success: true,
+        message: "Playing Cricket....."
+    })
+})
+
 // 404 handler
 app.use(notFound);
 
@@ -64,13 +72,7 @@ const io = initializeSocket(
 
 app.set("io", io);
 
-//Test Route
-app.get("/", (req, res) => {
-    res.json({
-        success: true,
-        message: "Playing Cricket....."
-    })
-})
+
 
 const PORT = process.env.PORT || 5000;
 
