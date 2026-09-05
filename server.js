@@ -33,7 +33,13 @@ const app = express();
 
 const server = http.createServer(app);
 
-app.use(cors());
+app.use(cors({
+    origin: [
+        "http://localhost:5000",
+        "https://auction-backend-flame.vercel.app/",
+    ],
+    credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }))
 
