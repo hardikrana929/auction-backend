@@ -36,7 +36,7 @@ const server = http.createServer(app);
 app.use(cors({
     origin: [
         "http://localhost:5000",
-        "https://auction-backend-flame.vercel.app/",
+        "https://auction-backend-lfwx.onrender.com/",
     ],
     credentials: true
 }));
