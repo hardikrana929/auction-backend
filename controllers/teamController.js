@@ -494,7 +494,6 @@ const deleteTeam = async (req, res) => {
             }
         }
 
-
         await Team.findByIdAndDelete(id);
 
         res.status(200).json({
