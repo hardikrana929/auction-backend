@@ -1,4 +1,5 @@
 const express = require("express");
+const upload = require("../middleware/uploadMiddleware");
 
 const {
     createPlayer,
@@ -35,6 +36,7 @@ router.post(
     "/",
     protectRoute,
     adminOnly,
+    upload.single("photo"),
     createPlayer
 );
 
@@ -43,6 +45,7 @@ router.put(
     "/:id",
     protectRoute,
     adminOnly,
+    upload.single("photo"),
     updatePlayer
 );
 

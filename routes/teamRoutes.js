@@ -1,5 +1,5 @@
 const express = require("express");
-
+const upload = require("../middleware/uploadMiddleware");
 const {
     createTeam,
     getTeamsByAuction,
@@ -24,45 +24,33 @@ router.get(
 );
 
 
-// ======================================================
 // GET SINGLE TEAM
-// ======================================================
-
 router.get(
     "/:id",
     protectRoute,
     getTeamById
 );
 
-
-// ======================================================
 // CREATE TEAM
-// ======================================================
-
 router.post(
     "/",
     protectRoute,
     adminOnly,
+    upload.single("logo"),
     createTeam
 );
 
 
-// ======================================================
 // UPDATE TEAM
-// ======================================================
-
 router.put(
     "/:id",
     protectRoute,
     adminOnly,
+    upload.single("logo"),
     updateTeam
 );
 
-
-// ======================================================
 // UPDATE TEAM STATUS
-// ======================================================
-
 router.patch(
     "/:id/status",
     protectRoute,
@@ -70,11 +58,7 @@ router.patch(
     updateTeamStatus
 );
 
-
-// ======================================================
 // DELETE TEAM
-// ======================================================
-
 router.delete(
     "/:id",
     protectRoute,

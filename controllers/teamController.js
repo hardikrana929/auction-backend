@@ -3,16 +3,16 @@ const mongoose = require("mongoose");
 const Team = require("../models/Team");
 const Auction = require("../models/Auction");
 
+const {
+    uploadToCloudinary,
+    deleteFromCloudinary,
+} = require("../utils/cloudinaryUpload");
+
 // CREATE TEAM
 
 const createTeam = async (req, res) => {
     try {
-        const {
-            auctionId,
-            name,
-            logo,
-            ownerName,
-        } = req.body;
+        const { auctionId, name, ownerName } = req.body;
 
         // Validate required fields
 
@@ -86,12 +86,30 @@ const createTeam = async (req, res) => {
             });
         }
 
+        //Add team logo to cloudinary if provided
+        let logoData = {
+            url: "",
+            publicId: "",
+        };
+
+        if (req.file) {
+            const result = await uploadToCloudinary(
+                req.file.buffer,
+                "auctionpro/teams"
+            );
+
+            logoData = {
+                url: result.secure_url,
+                publicId: result.public_id,
+            };
+        }
+
         // Create Team
 
         const team = await Team.create({
             auction: auctionId,
             name: name.trim(),
-            logo: logo || "",
+            logo: logoData,
             ownerName: ownerName.trim(),
 
             // Get budget from auction
@@ -208,12 +226,7 @@ const updateTeam = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const {
-            name,
-            logo,
-            ownerName,
-        } = req.body;
-
+        const { name, ownerName } = req.body;
 
         // Validate ID
 
@@ -245,10 +258,7 @@ const updateTeam = async (req, res) => {
         }
 
         // Don't update during live/completed auction
-        if (
-            auction.status === "live" ||
-            auction.status === "completed"
-        ) {
+        if (auction.status === "live" || auction.status === "completed") {
             return res.status(400).json({
                 success: false,
                 message: `Cannot update team during ${auction.status} auction`,
@@ -294,8 +304,31 @@ const updateTeam = async (req, res) => {
 
         // Update other fields
 
-        if (logo !== undefined) {
-            team.logo = logo;
+        if (req.file) {
+            // Delete old Cloudinary image
+            if (team.logo?.publicId) {
+                try {
+                    await deleteFromCloudinary(
+                        team.logo.publicId
+                    );
+                } catch (deleteError) {
+                    console.error(
+                        "Old team logo delete error:",
+                        deleteError
+                    );
+                }
+            }
+
+            // Upload new image
+            const result = await uploadToCloudinary(
+                req.file.buffer,
+                "auctionpro/teams"
+            );
+
+            team.logo = {
+                url: result.secure_url,
+                publicId: result.public_id,
+            };
         }
 
         if (ownerName !== undefined) {
@@ -448,9 +481,21 @@ const deleteTeam = async (req, res) => {
                 message: "Cannot delete team because players are assigned",
             });
         }
+        if (team.logo?.publicId) {
+            try {
+                await deleteFromCloudinary(
+                    team.logo.publicId
+                );
+            } catch (error) {
+                console.error(
+                    "Team logo deletion failed:",
+                    error
+                );
+            }
+        }
 
 
-        await team.deleteOne();
+        await Team.findByIdAndDelete(id);
 
         res.status(200).json({
             success: true,

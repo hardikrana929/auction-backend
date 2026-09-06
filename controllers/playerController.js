@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const Player = require("../models/Player");
 const Auction = require("../models/Auction");
 
+const { uploadToCloudinary, deleteFromCloudinary, } = require("../utils/cloudinaryUpload");
+
 // CREATE PLAYER
 const createPlayer = async (req, res) => {
     try {
@@ -10,7 +12,6 @@ const createPlayer = async (req, res) => {
             auctionId,
             fullName,
             lastName,
-            photo,
             contactNo,
             whatsappNo,
             villageTown,
@@ -102,6 +103,24 @@ const createPlayer = async (req, res) => {
             });
         }
 
+        // UPLOAD PHOTO TO CLOUDINARY
+        let photoData = {
+            url: "",
+            publicId: "",
+        };
+
+        if (req.file) {
+            const result = await uploadToCloudinary(
+                req.file.buffer,
+                "auctionpro/players"
+            );
+
+            photoData = {
+                url: result.secure_url,
+                publicId: result.public_id,
+            };
+        }
+
         // CREATE PLAYER
 
         const player = await Player.create({
@@ -110,7 +129,7 @@ const createPlayer = async (req, res) => {
             fullName: fullName.trim(),
             lastName: lastName.trim(),
 
-            photo: photo || "",
+            photo: photoData,
 
             contactNo: contactNo || "",
             whatsappNo: whatsappNo || "",
@@ -334,8 +353,31 @@ const updatePlayer = async (req, res) => {
                 req.body.lastName.trim();
         }
 
-        if (req.body.photo !== undefined) {
-            player.photo = req.body.photo;
+        if (req.file) {
+            // Delete old photo
+            if (player.photo?.publicId) {
+                try {
+                    await deleteFromCloudinary(
+                        player.photo.publicId
+                    );
+                } catch (deleteError) {
+                    console.error(
+                        "Old player photo delete error:",
+                        deleteError
+                    );
+                }
+            }
+
+            // Upload new photo
+            const result = await uploadToCloudinary(
+                req.file.buffer,
+                "auctionpro/players"
+            );
+
+            player.photo = {
+                url: result.secure_url,
+                publicId: result.public_id,
+            };
         }
 
         if (req.body.contactNo !== undefined) {
@@ -587,8 +629,20 @@ const deletePlayer = async (req, res) => {
                     `Cannot delete player from a ${auction.status} auction`,
             });
         }
+        if (player.photo?.publicId) {
+            try {
+                await deleteFromCloudinary(
+                    player.photo.publicId
+                );
+            } catch (error) {
+                console.error(
+                    "Player photo deletion failed:",
+                    error
+                );
+            }
+        }
 
-        await player.deleteOne();
+        await Player.findByIdAndDelete(id);
 
         res.status(200).json({
             success: true,
