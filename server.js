@@ -33,13 +33,18 @@ const app = express();
 
 const server = http.createServer(app);
 
-app.use(cors({
-    origin: [
-        "http://localhost:5000",
-        "https://auction-backend-lfwx.onrender.com/",
-    ],
-    credentials: true
-}));
+app.use(
+    cors({
+        origin: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://auction-backend-lfwx.onrender.com/",
+        ],
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+    })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }))
 
