@@ -1,9 +1,10 @@
 const express = require("express");
-const upload = require("../middleware/uploadMiddleware");
+const router = express.Router();
+
 const {
-    createTeam,
     getTeamsByAuction,
     getTeamById,
+    createTeam,
     updateTeam,
     updateTeamStatus,
     deleteTeam,
@@ -14,43 +15,46 @@ const {
     adminOnly,
 } = require("../middleware/authMiddleware");
 
-const router = express.Router();
+/*
+|--------------------------------------------------------------------------
+| TEAM ROUTES
+|--------------------------------------------------------------------------
+| Base URL:
+| /api/teams
+|--------------------------------------------------------------------------
+*/
 
-// GET ALL TEAMS OF AUCTION
+/*
+ * IMPORTANT:
+ * Put /auction/:auctionId BEFORE /:id
+ * so "auction" is not treated as a team ID.
+ */
 router.get(
     "/auction/:auctionId",
     protectRoute,
     getTeamsByAuction
 );
 
-
-// GET SINGLE TEAM
 router.get(
     "/:id",
     protectRoute,
     getTeamById
 );
 
-// CREATE TEAM
 router.post(
     "/",
     protectRoute,
     adminOnly,
-    upload.single("logo"),
     createTeam
 );
 
-
-// UPDATE TEAM
 router.put(
     "/:id",
     protectRoute,
     adminOnly,
-    upload.single("logo"),
     updateTeam
 );
 
-// UPDATE TEAM STATUS
 router.patch(
     "/:id/status",
     protectRoute,
@@ -58,13 +62,11 @@ router.patch(
     updateTeamStatus
 );
 
-// DELETE TEAM
 router.delete(
     "/:id",
     protectRoute,
     adminOnly,
     deleteTeam
 );
-
 
 module.exports = router;

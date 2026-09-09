@@ -1,201 +1,86 @@
 const mongoose = require("mongoose");
-
 const Team = require("../models/Team");
-const Auction = require("../models/Auction");
 
-const {
-    uploadToCloudinary,
-    deleteFromCloudinary,
-} = require("../utils/cloudinaryUpload");
+/*
+|--------------------------------------------------------------------------
+| Helper
+|--------------------------------------------------------------------------
+*/
 
-// CREATE TEAM
-
-const createTeam = async (req, res) => {
-    try {
-        const { auctionId, name, ownerName } = req.body;
-
-        // Validate required fields
-
-        if (!auctionId || !name || !ownerName) {
-            return res.status(400).json({
-                success: false,
-                message: "Auction, Team name and Owner name are required",
-            });
-        }
-
-        // Validate Auction ID
-
-        if (!mongoose.Types.ObjectId.isValid(auctionId)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid auction ID",
-            });
-        }
-
-        // Find Auction
-
-        const auction = await Auction.findById(auctionId);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // Check auction status
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed" ||
-            auction.status === "cancelled"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot add team to a ${auction.status} auction`,
-            });
-        }
-
-        // Check team limit
-
-        const teamCount = await Team.countDocuments({
-            auction: auctionId,
-        });
-
-        if (teamCount >= auction.maxTeams) {
-            return res.status(400).json({
-                success: false,
-                message: `Maximum ${auction.maxTeams} teams are allowed`,
-            });
-        }
-
-        // Check duplicate team name
-
-        const existingTeam = await Team.findOne({
-            auction: auctionId,
-            name: {
-                $regex: `^${name.trim()}$`,
-                $options: "i",
-            },
-        });
-
-        if (existingTeam) {
-            return res.status(400).json({
-                success: false,
-                message: "Team name already exists in this auction",
-            });
-        }
-
-        //Add team logo to cloudinary if provided
-        let logoData = {
-            url: "",
-            publicId: "",
-        };
-
-        if (req.file) {
-            const result = await uploadToCloudinary(
-                req.file.buffer,
-                "auctionpro/teams"
-            );
-
-            logoData = {
-                url: result.secure_url,
-                publicId: result.public_id,
-            };
-        }
-
-        // Create Team
-
-        const team = await Team.create({
-            auction: auctionId,
-            name: name.trim(),
-            logo: logoData,
-            ownerName: ownerName.trim(),
-
-            // Get budget from auction
-            totalBudget: auction.startingBudget,
-            remainingBudget: auction.startingBudget,
-
-            players: [],
-            status: "active",
-            owner: req.user._id,
-        });
-
-
-        res.status(201).json({
-            success: true,
-            message: "Team created successfully",
-            team,
-        });
-
-    } catch (error) {
-        console.error("Create Team Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while creating team",
-        });
-    }
+const isValidObjectId = (id) => {
+    return mongoose.Types.ObjectId.isValid(id);
 };
 
-// GET ALL TEAMS OF AN AUCTION
+/*
+|--------------------------------------------------------------------------
+| GET TEAMS BY AUCTION
+|--------------------------------------------------------------------------
+| GET /api/teams/auction/:auctionId
+|--------------------------------------------------------------------------
+*/
 
 const getTeamsByAuction = async (req, res) => {
     try {
         const { auctionId } = req.params;
 
-        // Validate ID
-        if (!mongoose.Types.ObjectId.isValid(auctionId)) {
+        if (!auctionId) {
+            return res.status(400).json({
+                success: false,
+                message: "Auction ID is required",
+            });
+        }
+
+        if (!isValidObjectId(auctionId)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid auction ID",
             });
         }
 
-        // Check auction
-        const auction = await Auction.findById(auctionId);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
         const teams = await Team.find({
             auction: auctionId,
-        }).populate("players").sort({ createdAt: 1 });
+        })
+            .populate("auction", "name date status")
+            .populate("owner", "name email")
+            .sort({ createdAt: -1 });
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             count: teams.length,
             teams,
         });
-
     } catch (error) {
-        console.error("Get Teams Error:", error);
+        console.error("Get teams by auction error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Server error while fetching teams",
+            message: "Failed to load teams",
         });
     }
 };
 
-// GET SINGLE TEAM
+/*
+|--------------------------------------------------------------------------
+| GET TEAM BY ID
+|--------------------------------------------------------------------------
+| GET /api/teams/:id
+|--------------------------------------------------------------------------
+*/
 
 const getTeamById = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (!isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid team ID",
             });
         }
 
-        const team = await Team.findById(id).populate("auction").populate("players");
+        const team = await Team.findById(id)
+            .populate("auction", "name date status")
+            .populate("owner", "name email");
 
         if (!team) {
             return res.status(404).json({
@@ -204,41 +89,159 @@ const getTeamById = async (req, res) => {
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             team,
         });
-
     } catch (error) {
-        console.error("Get Team Error:", error);
+        console.error("Get team error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Server error while fetching team",
+            message: "Failed to load team",
         });
     }
 };
 
+/*
+|--------------------------------------------------------------------------
+| CREATE TEAM
+|--------------------------------------------------------------------------
+| POST /api/teams
+|--------------------------------------------------------------------------
+*/
 
-// UPDATE TEAM
+const createTeam = async (req, res) => {
+    try {
+        const {
+            name,
+            owner,
+            auction,
+            budget,
+            logo,
+            status,
+        } = req.body;
+
+        if (!name || !auction) {
+            return res.status(400).json({
+                success: false,
+                message: "Team name and auction are required",
+            });
+        }
+
+        if (!isValidObjectId(auction)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid auction ID",
+            });
+        }
+
+        const existingTeam = await Team.findOne({
+            name: name.trim(),
+            auction,
+        });
+
+        if (existingTeam) {
+            return res.status(409).json({
+                success: false,
+                message: "A team with this name already exists in this auction",
+            });
+        }
+
+        const team = await Team.create({
+            name: name.trim(),
+            owner: owner || undefined,
+            auction,
+            budget: budget ?? 0,
+            logo: logo || "",
+            status: status || "ACTIVE",
+        });
+
+        const populatedTeam = await Team.findById(team._id)
+            .populate("auction", "name date status")
+            .populate("owner", "name email");
+
+        return res.status(201).json({
+            success: true,
+            message: "Team created successfully",
+            team: populatedTeam,
+        });
+    } catch (error) {
+        console.error("Create team error:", error);
+
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: "Team already exists",
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to create team",
+        });
+    }
+};
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE TEAM
+|--------------------------------------------------------------------------
+| PUT /api/teams/:id
+|--------------------------------------------------------------------------
+*/
 
 const updateTeam = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const { name, ownerName } = req.body;
-
-        // Validate ID
-
-        if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (!isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid team ID",
             });
         }
 
+        const allowedFields = [
+            "name",
+            "owner",
+            "auction",
+            "budget",
+            "logo",
+            "status",
+        ];
 
-        const team = await Team.findById(id);
+        const updateData = {};
+
+        allowedFields.forEach((field) => {
+            if (req.body[field] !== undefined) {
+                updateData[field] = req.body[field];
+            }
+        });
+
+        if (updateData.name) {
+            updateData.name = updateData.name.trim();
+        }
+
+        if (updateData.auction) {
+            if (!isValidObjectId(updateData.auction)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid auction ID",
+                });
+            }
+        }
+
+        const team = await Team.findByIdAndUpdate(
+            id,
+            updateData,
+            {
+                new: true,
+                runValidators: true,
+            }
+        )
+            .populate("auction", "name date status")
+            .populate("owner", "name email");
 
         if (!team) {
             return res.status(404).json({
@@ -247,144 +250,58 @@ const updateTeam = async (req, res) => {
             });
         }
 
-        // Get auction
-        const auction = await Auction.findById(team.auction);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // Don't update during live/completed auction
-        if (auction.status === "live" || auction.status === "completed") {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot update team during ${auction.status} auction`,
-            });
-        }
-
-        // Update name
-
-        if (name !== undefined) {
-            const trimmedName = name.trim();
-
-            if (!trimmedName) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Team name cannot be empty",
-                });
-            }
-
-
-            const duplicateTeam = await Team.findOne({
-                auction: team.auction,
-                name: {
-                    $regex: `^${trimmedName}$`,
-                    $options: "i",
-                },
-                _id: {
-                    $ne: team._id,
-                },
-            });
-
-
-            if (duplicateTeam) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Team name already exists",
-                });
-            }
-
-
-            team.name = trimmedName;
-        }
-
-
-        // Update other fields
-
-        if (req.file) {
-            // Delete old Cloudinary image
-            if (team.logo?.publicId) {
-                try {
-                    await deleteFromCloudinary(
-                        team.logo.publicId
-                    );
-                } catch (deleteError) {
-                    console.error(
-                        "Old team logo delete error:",
-                        deleteError
-                    );
-                }
-            }
-
-            // Upload new image
-            const result = await uploadToCloudinary(
-                req.file.buffer,
-                "auctionpro/teams"
-            );
-
-            team.logo = {
-                url: result.secure_url,
-                publicId: result.public_id,
-            };
-        }
-
-        if (ownerName !== undefined) {
-            if (!ownerName.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Owner name cannot be empty",
-                });
-            }
-
-            team.ownerName = ownerName.trim();
-        }
-
-        await team.save();
-
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: "Team updated successfully",
             team,
         });
-
     } catch (error) {
-        console.error("Update Team Error:", error);
+        console.error("Update team error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Server error while updating team",
+            message: "Failed to update team",
         });
     }
 };
 
-
-// UPDATE TEAM STATUS
+/*
+|--------------------------------------------------------------------------
+| UPDATE TEAM STATUS
+|--------------------------------------------------------------------------
+| PATCH /api/teams/:id/status
+|--------------------------------------------------------------------------
+*/
 
 const updateTeamStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
 
-
-        if (!["active", "inactive"].includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid team status",
-            });
-        }
-
-
-        if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (!isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid team ID",
             });
         }
 
-        const team = await Team.findById(id);
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: "Status is required",
+            });
+        }
+
+        const team = await Team.findByIdAndUpdate(
+            id,
+            { status },
+            {
+                new: true,
+                runValidators: true,
+            }
+        )
+            .populate("auction", "name date status")
+            .populate("owner", "name email");
 
         if (!team) {
             return res.status(404).json({
@@ -393,54 +310,41 @@ const updateTeamStatus = async (req, res) => {
             });
         }
 
-        const auction = await Auction.findById(team.auction);
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot change team status during ${auction.status} auction`,
-            });
-        }
-
-
-        team.status = status;
-
-        await team.save();
-
-
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
-            message: `Team ${status} successfully`,
+            message: "Team status updated successfully",
             team,
         });
-
     } catch (error) {
-        console.error("Team Status Error:", error);
+        console.error("Update team status error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Server error while updating team status",
+            message: "Failed to update team status",
         });
     }
 };
 
-// DELETE TEAM
+/*
+|--------------------------------------------------------------------------
+| DELETE TEAM
+|--------------------------------------------------------------------------
+| DELETE /api/teams/:id
+|--------------------------------------------------------------------------
+*/
 
 const deleteTeam = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (!isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid team ID",
             });
         }
 
-        const team = await Team.findById(id);
+        const team = await Team.findByIdAndDelete(id);
 
         if (!team) {
             return res.status(404).json({
@@ -449,73 +353,24 @@ const deleteTeam = async (req, res) => {
             });
         }
 
-
-        const auction = await Auction.findById(team.auction);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-
-        // Prevent deleting team after auction starts
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot delete team from a ${auction.status} auction`,
-            });
-        }
-
-
-        // Don't delete team if players exist
-
-        if (team.players.length > 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Cannot delete team because players are assigned",
-            });
-        }
-        if (team.logo?.publicId) {
-            try {
-                await deleteFromCloudinary(
-                    team.logo.publicId
-                );
-            } catch (error) {
-                console.error(
-                    "Team logo deletion failed:",
-                    error
-                );
-            }
-        }
-
-        await Team.findByIdAndDelete(id);
-
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: "Team deleted successfully",
         });
-
     } catch (error) {
-        console.error("Delete Team Error:", error);
+        console.error("Delete team error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Server error while deleting team",
+            message: "Failed to delete team",
         });
     }
 };
 
-
 module.exports = {
-    createTeam,
     getTeamsByAuction,
     getTeamById,
+    createTeam,
     updateTeam,
     updateTeamStatus,
     deleteTeam,
