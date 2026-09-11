@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const upload = require("../middleware/uploadMiddleware");
 
 const {
     getTeamsByAuction,
@@ -45,6 +46,7 @@ router.post(
     "/",
     protectRoute,
     adminOnly,
+    upload.single("logo"),
     createTeam
 );
 
@@ -52,6 +54,7 @@ router.put(
     "/:id",
     protectRoute,
     adminOnly,
+    upload.single("logo"),
     updateTeam
 );
 

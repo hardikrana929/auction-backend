@@ -310,6 +310,13 @@ const placeBid = async (req, res) => {
             );
         }
 
+        if (
+            req.user.role !== "admin" &&
+            team.owner.toString() !== req.user._id.toString()
+        ) {
+            throw new Error("You are not authorized to bid for this team");
+        }
+
         // ------------------------------------------
         // Registration
         // ------------------------------------------

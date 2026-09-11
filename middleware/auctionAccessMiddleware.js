@@ -129,6 +129,16 @@ const validateTeamAccess = async (req, res, next) => {
             });
         }
 
+        if (
+            req.user.role !== "admin" &&
+            team.owner.toString() !== req.user._id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not authorized to access this team",
+            });
+        }
+
         req.team = team;
 
         next();

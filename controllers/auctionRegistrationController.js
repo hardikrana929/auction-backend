@@ -53,6 +53,16 @@ const registerTeam = async (req, res) => {
             });
         }
 
+        if (
+            req.user.role !== "admin" &&
+            team.owner.toString() !== req.user._id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not authorized to register this team",
+            });
+        }
+
         // Check existing registration
         let registration = await AuctionRegistration.findOne({
             auction: auctionId,
@@ -106,7 +116,6 @@ const registerTeam = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to register team",
-            error: error.message,
         });
     }
 };
@@ -194,7 +203,7 @@ const approveRegistration = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to approve registration",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     } finally {
         session.endSession();
@@ -245,7 +254,7 @@ const rejectRegistration = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to reject registration",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -301,7 +310,7 @@ const cancelRegistration = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to cancel registration",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -379,7 +388,7 @@ const getAuctionRegistrations = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to get auction registrations",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -416,7 +425,7 @@ const getRegistrationById = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to get registration",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -454,7 +463,7 @@ const getRegistrationStatus = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to get registration status",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };

@@ -501,7 +501,7 @@ const getAuctionStats = async (req, res) => {
             success: false,
             message:
                 "Failed to get auction statistics",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };

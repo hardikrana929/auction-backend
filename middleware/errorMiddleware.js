@@ -76,6 +76,14 @@ const errorHandler = (err, req, res, next) => {
         message = "Authentication token has expired";
     }
 
+    // Multer upload errors
+    else if (err.name === "MulterError" || err.code === "LIMIT_FILE_SIZE") {
+        statusCode = 400;
+        message = err.code === "LIMIT_FILE_SIZE"
+            ? "Uploaded file is too large. Maximum size is 2 MB."
+            : "Invalid file upload";
+    }
+
     // Syntax Error / Invalid JSON
     else if (
         err instanceof SyntaxError &&

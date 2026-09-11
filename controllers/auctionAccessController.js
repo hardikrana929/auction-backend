@@ -19,6 +19,14 @@ const checkAuctionAccess = async (req, res) => {
                 registeredBy: req.user._id,
             }).populate("team", "name logo status");
 
+        const approvedRegistrations = registrations.filter(
+            (registration) => registration.status === "approved" &&
+                registration.team?.status === "active"
+        );
+
+        const canParticipate =
+            auction.status === "live" && approvedRegistrations.length > 0;
+
         return res.status(200).json({
             success: true,
             message: "Auction access checked successfully",
@@ -35,8 +43,8 @@ const checkAuctionAccess = async (req, res) => {
                 access: {
                     isAdmin,
                     isCreator,
-                    canManageAuction:
-                        isAdmin || isCreator,
+                    canManageAuction: isAdmin || isCreator,
+                    canParticipate,
                 },
                 registrations,
             },

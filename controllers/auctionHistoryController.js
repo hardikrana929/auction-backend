@@ -145,7 +145,7 @@ const getAuctionHistory = async (req, res) => {
             success: false,
             message:
                 "Failed to get auction history",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -227,7 +227,7 @@ const getSoldPlayersHistory = async (req, res) => {
             success: false,
             message:
                 "Failed to get sold players history",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -308,7 +308,7 @@ const getUnsoldPlayersHistory = async (req, res) => {
             success: false,
             message:
                 "Failed to get unsold players history",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -387,7 +387,7 @@ const getAuctionBidHistory = async (req, res) => {
             success: false,
             message:
                 "Failed to get auction bid history",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -463,7 +463,7 @@ const getPlayerTransactionHistory = async (
             success: false,
             message:
                 "Failed to get player transaction history",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };

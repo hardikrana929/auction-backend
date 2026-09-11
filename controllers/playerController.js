@@ -3,11 +3,19 @@ const mongoose = require("mongoose");
 const Player = require("../models/Player");
 const Auction = require("../models/Auction");
 
-const { uploadToCloudinary, deleteFromCloudinary, } = require("../utils/cloudinaryUpload");
+const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryUpload");
+const { validateImageBuffer } = require("../utils/imageValidation");
 
 // CREATE PLAYER
 const createPlayer = async (req, res) => {
     try {
+        if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid image file",
+            });
+        }
+
         const {
             auctionId,
             fullName,
@@ -282,6 +290,13 @@ const getPlayerById = async (req, res) => {
 // UPDATE PLAYER
 const updatePlayer = async (req, res) => {
     try {
+        if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid image file",
+            });
+        }
+
         const { id } = req.params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {

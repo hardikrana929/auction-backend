@@ -67,7 +67,7 @@ const createNotification = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to create notification",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -139,7 +139,7 @@ const getMyNotifications = async (req, res) => {
             success: false,
             message:
                 "Failed to get notifications",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -178,7 +178,7 @@ const getNotificationById = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to get notification",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -222,7 +222,7 @@ const markNotificationAsRead = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to mark notification as read",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -262,7 +262,7 @@ const markAllNotificationsAsRead = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to mark all notifications as read",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -303,7 +303,7 @@ const deleteNotification = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to delete notification",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -332,7 +332,7 @@ const deleteReadNotifications = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to delete read notifications",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -382,7 +382,7 @@ const getAuctionNotificationCount = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to get notification count",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };

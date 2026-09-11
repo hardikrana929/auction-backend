@@ -122,7 +122,7 @@ const validateAuctionStart = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to validate auction",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -207,7 +207,7 @@ const validatePlayerAuction = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to validate player auction",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -351,7 +351,7 @@ const validateBid = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to validate bid",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -439,7 +439,7 @@ const validateTeamPurchase = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to validate team purchase",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };
@@ -514,7 +514,7 @@ const validateAuctionCompletion = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to validate auction completion",
-            error: error.message,
+            // Do not expose internal error details in API responses.
         });
     }
 };

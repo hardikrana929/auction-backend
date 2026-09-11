@@ -1,7 +1,10 @@
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
 const Auction = require("../models/Auction");
 const AuctionRegistration = require("../models/AuctionRegistration");
+const Team = require("../models/Team");
 
 // Auction Room Helpers
 const getAuctionRoom = (auctionId) => {
@@ -23,6 +26,11 @@ const isValidAuctionId = (auctionId) => {
 // Join Auction Room
 const joinAuction = async (socket, auctionId) => {
     try {
+        if (!socket.user) {
+            socket.emit("auction:error", { message: "Authentication required" });
+            return;
+        }
+
         if (!isValidAuctionId(auctionId)) {
             socket.emit("auction:error", {
                 message: "Invalid auction ID",
@@ -41,6 +49,28 @@ const joinAuction = async (socket, auctionId) => {
             });
 
             return;
+        }
+
+        const isAdmin = socket.user.role === "admin";
+        const isCreator = auction.createdBy?.toString() === socket.user._id.toString();
+        const registration = await AuctionRegistration.findOne({
+            auction: auctionId,
+            registeredBy: socket.user._id,
+            status: "approved",
+        });
+
+        // Participants may enter the live room only after the auction starts.
+        // Admins and the auction creator retain access for control/monitoring.
+        if (!isAdmin && !isCreator) {
+            if (auction.status !== "live") {
+                socket.emit("auction:error", { message: "Auction is not live" });
+                return;
+            }
+
+            if (!registration) {
+                socket.emit("auction:error", { message: "Not authorized to join this auction" });
+                return;
+            }
         }
 
         socket.join(getAuctionRoom(auctionId));
@@ -91,11 +121,30 @@ const leaveAuction = (socket, auctionId) => {
 // Join Team Room
 const joinTeam = async (socket, teamId) => {
     try {
+        if (!socket.user) {
+            socket.emit("team:error", { message: "Authentication required" });
+            return;
+        }
+
         if (!teamId || !mongoose.Types.ObjectId.isValid(teamId)) {
             socket.emit("team:error", {
                 message: "Invalid team ID",
             });
 
+            return;
+        }
+
+        const team = await Team.findById(teamId).select("owner status");
+        if (!team) {
+            socket.emit("team:error", { message: "Team not found" });
+            return;
+        }
+
+        if (
+            socket.user.role !== "admin" &&
+            team.owner.toString() !== socket.user._id.toString()
+        ) {
+            socket.emit("team:error", { message: "Not authorized to join this team" });
             return;
         }
 
