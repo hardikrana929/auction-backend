@@ -1,6 +1,7 @@
 const AuctionRegistration = require("../models/AuctionRegistration");
 const Auction = require("../models/Auction");
 const Team = require("../models/Team");
+const withTransaction = require("../utils/withTransaction");
 
 // REGISTER TEAM FOR AUCTION
 // POST /api/auction-registration/register
@@ -124,89 +125,79 @@ const registerTeam = async (req, res) => {
 // PUT /api/auction-registration/:registrationId/approve
 // ADMIN ONLY
 const approveRegistration = async (req, res) => {
-    const session = await AuctionRegistration.startSession();
-
     try {
-        session.startTransaction();
-
         const { registrationId } = req.params;
 
-        const registration = await AuctionRegistration.findById(
-            registrationId
-        )
-            .populate("auction")
-            .session(session);
+        const result = await withTransaction(async (session) => {
+            const registration = await AuctionRegistration.findById(registrationId)
+                .populate("auction")
+                .session(session);
 
-        if (!registration) {
-            await session.abortTransaction();
+            if (!registration) {
+                const err = new Error("Registration not found");
+                err.statusCode = 404;
+                throw err;
+            }
 
-            return res.status(404).json({
-                success: false,
-                message: "Registration not found",
-            });
-        }
+            if (registration.status !== "pending") {
+                const err = new Error(`Registration is already ${registration.status}`);
+                err.statusCode = 400;
+                throw err;
+            }
 
-        if (registration.status !== "pending") {
-            await session.abortTransaction();
+            const auction = registration.auction;
 
-            return res.status(400).json({
-                success: false,
-                message: `Registration is already ${registration.status}`,
-            });
-        }
+            if (!["draft", "upcoming"].includes(auction.status)) {
+                const err = new Error("Cannot approve registration after auction has started");
+                err.statusCode = 400;
+                throw err;
+            }
 
-        const auction = registration.auction;
+            // Atomically claim a team slot: this UPDATE is the actual
+            // check-and-increment, done as one conditional write against
+            // the shared Auction document. If two approvals race, MongoDB's
+            // transaction conflict detection now has something real to
+            // conflict on (both are writing the same document), so the
+            // loser gets a TransientTransactionError and withTransaction
+            // retries it — at which point it correctly re-reads the
+            // updated count and fails the cap check below instead of
+            // silently overcommitting.
+            const claimed = await Auction.findOneAndUpdate(
+                {
+                    _id: auction._id,
+                    $expr: { $lt: ["$approvedTeamsCount", "$maxTeams"] },
+                },
+                { $inc: { approvedTeamsCount: 1 } },
+                { session, new: true }
+            );
 
-        // Auction must not have started
-        if (!["draft", "upcoming"].includes(auction.status)) {
-            await session.abortTransaction();
+            if (!claimed) {
+                const err = new Error(`Maximum team limit reached. Maximum teams: ${auction.maxTeams}`);
+                err.statusCode = 400;
+                throw err;
+            }
 
-            return res.status(400).json({
-                success: false,
-                message: "Cannot approve registration after auction has started",
-            });
-        }
+            registration.status = "approved";
+            registration.approvedAt = new Date();
+            registration.approvedBy = req.user._id;
 
-        // Count approved teams
-        const approvedCount = await AuctionRegistration.countDocuments({
-            auction: auction._id,
-            status: "approved",
-        }).session(session);
+            await registration.save({ session });
 
-        if (approvedCount >= auction.maxTeams) {
-            await session.abortTransaction();
-
-            return res.status(400).json({
-                success: false,
-                message: `Maximum team limit reached. Maximum teams: ${auction.maxTeams}`,
-            });
-        }
-
-        registration.status = "approved";
-        registration.approvedAt = new Date();
-        registration.approvedBy = req.user._id;
-
-        await registration.save({ session });
-
-        await session.commitTransaction();
+            return registration;
+        });
 
         return res.status(200).json({
             success: true,
             message: "Team registration approved successfully",
-            registration,
+            registration: result,
         });
     } catch (error) {
-        await session.abortTransaction();
-
         console.error("Approve Registration Error:", error);
 
-        return res.status(500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
-            message: "Failed to approve registration",
-            // Do not expose internal error details in API responses.
+            message: error.statusCode ? error.message : "Failed to approve registration",
         });
-    } finally {
-        session.endSession();
     }
 };
 
@@ -265,52 +256,58 @@ const cancelRegistration = async (req, res) => {
     try {
         const { registrationId } = req.params;
 
-        const registration = await AuctionRegistration.findById(
-            registrationId
-        );
+        const result = await withTransaction(async (session) => {
+            const registration = await AuctionRegistration.findById(registrationId).session(session);
 
-        if (!registration) {
-            return res.status(404).json({
-                success: false,
-                message: "Registration not found",
-            });
-        }
+            if (!registration) {
+                const err = new Error("Registration not found");
+                err.statusCode = 404;
+                throw err;
+            }
 
-        // Only person who registered the team can cancel it
-        if (
-            registration.registeredBy.toString() !==
-            req.user._id.toString()
-        ) {
-            return res.status(403).json({
-                success: false,
-                message: "You are not allowed to cancel this registration",
-            });
-        }
+            if (registration.registeredBy.toString() !== req.user._id.toString()) {
+                const err = new Error("You are not allowed to cancel this registration");
+                err.statusCode = 403;
+                throw err;
+            }
 
-        if (!["pending", "approved"].includes(registration.status)) {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot cancel registration with status ${registration.status}`,
-            });
-        }
+            if (!["pending", "approved"].includes(registration.status)) {
+                const err = new Error(`Cannot cancel registration with status ${registration.status}`);
+                err.statusCode = 400;
+                throw err;
+            }
 
-        registration.status = "cancelled";
-        registration.cancelledAt = new Date();
+            // Free up the team slot this registration was holding.
+            // Only decrement if it had actually consumed one (i.e. it was
+            // approved) — a still-pending registration never incremented
+            // approvedTeamsCount in the first place.
+            if (registration.status === "approved") {
+                await Auction.findByIdAndUpdate(
+                    registration.auction,
+                    { $inc: { approvedTeamsCount: -1 } },
+                    { session }
+                );
+            }
 
-        await registration.save();
+            registration.status = "cancelled";
+            registration.cancelledAt = new Date();
+
+            await registration.save({ session });
+
+            return registration;
+        });
 
         return res.status(200).json({
             success: true,
             message: "Auction registration cancelled",
-            registration,
+            registration: result,
         });
     } catch (error) {
         console.error("Cancel Registration Error:", error);
 
-        return res.status(500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
-            message: "Failed to cancel registration",
-            // Do not expose internal error details in API responses.
+            message: error.statusCode ? error.message : "Failed to cancel registration",
         });
     }
 };
@@ -467,7 +464,6 @@ const getRegistrationStatus = async (req, res) => {
         });
     }
 };
-
 
 module.exports = {
     registerTeam,

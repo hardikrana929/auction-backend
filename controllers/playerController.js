@@ -511,23 +511,19 @@ const updatePlayer = async (req, res) => {
 };
 
 // UPDATE PLAYER STATUS
-
 const updatePlayerStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
 
-        const allowedStatuses = [
-            "available",
-            "auctioning",
-            "sold",
-            "unsold",
-        ];
+        // Only transitions that don't require touching a team's
+        // budget/roster are allowed through this endpoint.
+        const allowedStatuses = ["available", "auctioning"];
 
         if (!allowedStatuses.includes(status)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid player status",
+                message: "Invalid player status. Use the bidding endpoints (/api/bidding/sell, /api/bidding/unsold) to mark a player sold or unsold.",
             });
         }
 
@@ -547,9 +543,7 @@ const updatePlayerStatus = async (req, res) => {
             });
         }
 
-        const auction = await Auction.findById(
-            player.auction
-        );
+        const auction = await Auction.findById(player.auction);
 
         if (!auction) {
             return res.status(404).json({
@@ -558,27 +552,27 @@ const updatePlayerStatus = async (req, res) => {
             });
         }
 
-        // Only allow manual status changes
-        // before live auction
-
-        if (auction.status === "completed") {
+        // A player who has already been sold or marked unsold should
+        // only move again via the bidding flow (e.g. re-auctioning an
+        // unsold player), not via this manual status endpoint.
+        if (player.status === "sold") {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Cannot change player status after auction completion",
+                message: "Cannot manually change the status of a sold player",
+            });
+        }
+
+        if (auction.status === "live" || auction.status === "completed") {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot manually change player status during a ${auction.status} auction`,
             });
         }
 
         player.status = status;
-
-        // If player is made available again,
-        // clear auctioning data only when not sold.
-
-        if (status === "available" || status === "auctioning") {
-            player.soldTo = null;
-            player.soldPrice = 0;
-            player.currentBid = 0;
-        }
+        player.soldTo = null;
+        player.soldPrice = 0;
+        player.currentBid = 0;
 
         await player.save();
 
@@ -587,14 +581,12 @@ const updatePlayerStatus = async (req, res) => {
             message: `Player status changed to ${status}`,
             player,
         });
-
     } catch (error) {
         console.error("Player Status Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Server error while updating player status",
+            message: "Server error while updating player status",
         });
     }
 };

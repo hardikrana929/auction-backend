@@ -6,6 +6,8 @@ const Team = require("../models/Team");
 const AuctionTransaction = require("../models/AuctionTransaction");
 const AuctionRegistration = require("../models/AuctionRegistration");
 const AuctionSession = require("../models/AuctionSession");
+const AuctionNotification = require("../models/AuctionNotification");
+const withTransaction = require("../utils/withTransaction");
 
 // --------------------------------------------------
 // Helper: Get Socket.IO instance
@@ -63,6 +65,20 @@ const startPlayerAuction = async (req, res) => {
         if (auction.status !== "live") {
             throw new Error(
                 "Auction is not live"
+            );
+        }
+
+        // ------------------------------------------
+        // Make sure the auction isn't paused
+        // ------------------------------------------
+
+        const activeSessionCheck = await AuctionSession.findOne({
+            auction: auctionId,
+        }).session(session);
+
+        if (activeSessionCheck?.isPaused) {
+            throw new Error(
+                "Auction is currently paused. Resume it before starting the next player."
             );
         }
 
@@ -220,8 +236,6 @@ const startPlayerAuction = async (req, res) => {
 // ==================================================
 
 const placeBid = async (req, res) => {
-    const session = await mongoose.startSession();
-
     try {
         const {
             auctionId,
@@ -251,159 +265,132 @@ const placeBid = async (req, res) => {
             });
         }
 
-        session.startTransaction();
+        const { player, team, transaction, previousBidder } = await withTransaction(async (session) => {
+            // ------------------------------------------
+            // Auction
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Auction
-        // ------------------------------------------
+            const auction = await Auction.findById(auctionId).session(session);
 
-        const auction = await Auction.findById(
-            auctionId
-        ).session(session);
+            if (!auction) {
+                throw new Error("Auction not found");
+            }
 
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
+            if (auction.status !== "live") {
+                throw new Error("Auction is not live");
+            }
 
-        if (auction.status !== "live") {
-            throw new Error(
-                "Auction is not live"
-            );
-        }
+            // ------------------------------------------
+            // Make sure the auction isn't paused
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Player
-        // ------------------------------------------
+            const auctionSessionCheck = await AuctionSession.findOne({
+                auction: auctionId,
+            }).session(session);
 
-        const player = await Player.findOne({
-            _id: playerId,
-            auction: auctionId,
-        }).session(session);
+            if (auctionSessionCheck?.isPaused) {
+                throw new Error("Bidding is paused for this auction");
+            }
 
-        if (!player) {
-            throw new Error(
-                "Player not found"
-            );
-        }
+            // ------------------------------------------
+            // Player
+            // ------------------------------------------
 
-        if (player.status !== "auctioning") {
-            throw new Error(
-                "Player is not currently being auctioned"
-            );
-        }
+            const player = await Player.findOne({
+                _id: playerId,
+                auction: auctionId,
+            }).session(session);
 
-        // ------------------------------------------
-        // Team
-        // ------------------------------------------
+            if (!player) {
+                throw new Error("Player not found");
+            }
 
-        const team = await Team.findOne({
-            _id: teamId,
-            auction: auctionId,
-            status: "active",
-        }).session(session);
+            if (player.status !== "auctioning") {
+                throw new Error("Player is not currently being auctioned");
+            }
 
-        if (!team) {
-            throw new Error(
-                "Team not found or inactive"
-            );
-        }
+            // ------------------------------------------
+            // Team
+            // ------------------------------------------
 
-        if (
-            req.user.role !== "admin" &&
-            team.owner.toString() !== req.user._id.toString()
-        ) {
-            throw new Error("You are not authorized to bid for this team");
-        }
+            const team = await Team.findOne({
+                _id: teamId,
+                auction: auctionId,
+                status: "active",
+            }).session(session);
 
-        // ------------------------------------------
-        // Registration
-        // ------------------------------------------
+            if (!team) {
+                throw new Error("Team not found or inactive");
+            }
 
-        const registration =
-            await AuctionRegistration.findOne({
+            if (
+                req.user.role !== "admin" &&
+                team.owner.toString() !== req.user._id.toString()
+            ) {
+                throw new Error("You are not authorized to bid for this team");
+            }
+
+            // ------------------------------------------
+            // Registration
+            // ------------------------------------------
+
+            const registration = await AuctionRegistration.findOne({
                 auction: auctionId,
                 team: teamId,
                 status: "approved",
             }).session(session);
 
-        if (!registration) {
-            throw new Error(
-                "Team is not approved for this auction"
-            );
-        }
+            if (!registration) {
+                throw new Error("Team is not approved for this auction");
+            }
 
-        // ------------------------------------------
-        // Validate bid increment
-        // ------------------------------------------
+            // ------------------------------------------
+            // Validate bid increment
+            // ------------------------------------------
 
-        const currentBid =
-            player.currentBid ||
-            player.basePrice;
+            const currentBid = player.currentBid || player.basePrice;
+            const minimumNextBid = currentBid + auction.bidIncrement;
 
-        const minimumNextBid =
-            currentBid +
-            auction.bidIncrement;
+            if (Number(amount) < minimumNextBid) {
+                throw new Error(`Minimum next bid is ${minimumNextBid}`);
+            }
 
-        if (Number(amount) < minimumNextBid) {
-            throw new Error(
-                `Minimum next bid is ${minimumNextBid}`
-            );
-        }
+            // ------------------------------------------
+            // Validate budget
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Validate budget
-        // ------------------------------------------
+            if (Number(amount) > team.remainingBudget) {
+                throw new Error("Insufficient team budget");
+            }
 
-        if (
-            Number(amount) >
-            team.remainingBudget
-        ) {
-            throw new Error(
-                "Insufficient team budget"
-            );
-        }
+            // ------------------------------------------
+            // Validate roster
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Validate roster
-        // ------------------------------------------
+            if (team.players.length >= auction.maxPlayersPerTeam) {
+                throw new Error("Team has reached maximum player limit");
+            }
 
-        if (
-            team.players.length >=
-            auction.maxPlayersPerTeam
-        ) {
-            throw new Error(
-                "Team has reached maximum player limit"
-            );
-        }
+            // ------------------------------------------
+            // Save previous bidder (before we overwrite it)
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Save previous bidder
-        // ------------------------------------------
+            const previousBidderTeamId = player.currentBidder;
 
-        const previousBidder =
-            player.currentBidder;
+            // ------------------------------------------
+            // Update player
+            // ------------------------------------------
 
-        // ------------------------------------------
-        // Update player
-        // ------------------------------------------
+            player.currentBid = Number(amount);
+            player.currentBidder = team._id;
 
-        player.currentBid = Number(amount);
+            await player.save({ session });
 
-        player.currentBidder =
-            team._id;
+            // ------------------------------------------
+            // Create transaction
+            // ------------------------------------------
 
-        await player.save({
-            session,
-        });
-
-        // ------------------------------------------
-        // Create transaction
-        // ------------------------------------------
-
-        const transaction =
-            new AuctionTransaction({
+            const transaction = new AuctionTransaction({
                 auction: auctionId,
                 player: playerId,
                 team: teamId,
@@ -412,32 +399,46 @@ const placeBid = async (req, res) => {
                 createdBy: req.user._id,
             });
 
-        await transaction.save({
-            session,
-        });
+            await transaction.save({ session });
 
-        // ------------------------------------------
-        // Update Auction Session
-        // ------------------------------------------
+            // ------------------------------------------
+            // Update Auction Session
+            // ------------------------------------------
 
-        await AuctionSession.findOneAndUpdate(
-            {
-                auction: auctionId,
-            },
-            {
-                lastAction: "bid_placed",
-                lastActionAt: new Date(),
-            },
-            {
-                session,
+            await AuctionSession.findOneAndUpdate(
+                { auction: auctionId },
+                { lastAction: "bid_placed", lastActionAt: new Date() },
+                { session }
+            );
+
+            // ------------------------------------------
+            // Notify the team that just got outbid
+            // ------------------------------------------
+
+            if (previousBidderTeamId && previousBidderTeamId.toString() !== team._id.toString()) {
+                const outbidTeam = await Team.findById(previousBidderTeamId).session(session);
+
+                if (outbidTeam) {
+                    await AuctionNotification.create(
+                        [
+                            {
+                                auction: auctionId,
+                                recipient: outbidTeam.owner,
+                                team: outbidTeam._id,
+                                player: player._id,
+                                type: "outbid",
+                                title: "You've been outbid",
+                                message: `${team.name} placed a higher bid of ${amount} on ${player.fullName}.`,
+                                data: { amount, previousAmount: currentBid },
+                            },
+                        ],
+                        { session }
+                    );
+                }
             }
-        );
 
-        // ------------------------------------------
-        // Commit
-        // ------------------------------------------
-
-        await session.commitTransaction();
+            return { player, team, transaction, previousBidder: previousBidderTeamId };
+        });
 
         // ------------------------------------------
         // SOCKET EVENT
@@ -486,8 +487,6 @@ const placeBid = async (req, res) => {
             },
         });
     } catch (error) {
-        await session.abortTransaction();
-
         console.error(
             "Place Bid Error:",
             error
@@ -497,8 +496,6 @@ const placeBid = async (req, res) => {
             success: false,
             message: error.message,
         });
-    } finally {
-        await session.endSession();
     }
 };
 

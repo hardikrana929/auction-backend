@@ -10,11 +10,12 @@ const {
     resetPassword,
 } = require("../controllers/authController");
 const { protectRoute } = require("../middleware/authMiddleware");
+const { loginLimiter, registerLimiter, forgotPasswordLimiter } = require("../middleware/rateLimiters");
 
-//Publid Routes 
-route.post("/register", registerUser);
-route.post("/login", loginUser);
-route.post("/forgot-password", forgotPassword);
+//Public Routes
+route.post("/register", registerLimiter, registerUser);
+route.post("/login", loginLimiter, loginUser);
+route.post("/forgot-password", forgotPasswordLimiter, forgotPassword);
 route.post("/reset-password/:token", resetPassword);
 
 //Protected Routes

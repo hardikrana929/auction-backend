@@ -68,4 +68,11 @@ const teamSchema = new mongoose.Schema(
     }
 );
 
+// The application-level findOne() duplicate-name check in
+// teamController.createTeam is race-prone on its own (two concurrent
+// requests can both pass it). This index makes MongoDB itself the
+// source of truth and backs the error.code === 11000 handling that
+// teamController.js already expects to exist.
+teamSchema.index({ auction: 1, name: 1 }, { unique: true });
+
 module.exports = mongoose.model("Team", teamSchema);

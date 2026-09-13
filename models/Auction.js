@@ -55,6 +55,23 @@ const auctionSchema = new mongoose.Schema(
             min: [1, "Players per team must be at least 1"],
         },
 
+        /* Tracks how many teams are currently APPROVED for this auction.
+         Kept in sync by atomic $inc/$dec operations in
+         auctionRegistrationController.js (approve/cancel) rather than
+         by counting AuctionRegistration documents at check time, because
+         a count-then-approve check across separate documents does NOT
+         get protected by MongoDB's transaction conflict detection —
+         two concurrent approvals of two different pending registrations
+         can both read the same "under the cap" count and both commit.
+         Writing this field on the Auction document itself forces real
+         document-level contention, which transactions DO protect.*/
+
+        approvedTeamsCount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+
         status: {
             type: String,
             enum: ["draft", "upcoming", "live", "completed", "cancelled"],

@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Auction = require("../models/Auction");
 const Player = require("../models/Player");
 const AuctionSession = require("../models/AuctionSession");
+const AuctionRegistration = require("../models/AuctionRegistration");
 
 // --------------------------------------------------
 // Helper: Get Socket.IO
@@ -87,6 +88,32 @@ const startAuction = async (
         if (totalPlayers === 0) {
             throw new Error(
                 "Cannot start auction without players"
+            );
+        }
+        // ------------------------------------------
+        // Enforce a minimum/maximum approved team count.
+        //
+        // This mirrors the check validateAuctionStart already performs
+        // in auctionValidationController.js — that endpoint is advisory
+        // only (the frontend calls it to show a "ready to start" banner),
+        // so it doesn't actually stop a live auction from starting with
+        // too few teams. This is the enforcement that was missing.
+        // ------------------------------------------
+
+        const approvedTeamsCount = await AuctionRegistration.countDocuments({
+            auction: auctionId,
+            status: "approved",
+        }).session(session);
+
+        if (approvedTeamsCount < 2) {
+            throw new Error(
+                "At least 2 approved teams are required to start the auction"
+            );
+        }
+
+        if (approvedTeamsCount > auction.maxTeams) {
+            throw new Error(
+                `Approved teams (${approvedTeamsCount}) exceed the auction's maximum of ${auction.maxTeams}`
             );
         }
 

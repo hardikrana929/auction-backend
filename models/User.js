@@ -29,6 +29,18 @@ const userSchema = new mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
+    },
+
+    // Used by authController's forgotPassword/resetPassword flow.
+    // Both are hidden by default (select: false) and only pulled in
+    // explicitly via .select("+resetPasswordToken +resetPasswordExpires").
+    resetPasswordToken: {
+        type: String,
+        select: false
+    },
+    resetPasswordExpires: {
+        type: Date,
+        select: false
     }
 
 },
@@ -37,6 +49,15 @@ const userSchema = new mongoose.Schema({
     }
 
 );
+
+// Speeds up the lookup in resetPassword() and lets expired/null tokens
+// be excluded cheaply. sparse: true keeps users with no reset token
+// (the vast majority, at any time) out of the index entirely.
+userSchema.index(
+    { resetPasswordToken: 1 },
+    { sparse: true }
+);
+
 userSchema.pre('save', async function (next) {
     if (!this.isModified('password')) {
         return;

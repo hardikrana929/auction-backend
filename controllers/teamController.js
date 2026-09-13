@@ -42,6 +42,12 @@ const getTeamById = async (req, res) => {
 };
 
 const createTeam = async (req, res) => {
+    // Tracks whether we've uploaded a logo this request, so we can
+    // clean it up on Cloudinary if the DB write below fails for any
+    // reason (validation error, duplicate name, etc). Without this,
+    // a failed team creation still leaves a billed, orphaned asset.
+    let uploadedLogo = null;
+
     try {
         if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
             return res.status(400).json({ success: false, message: "Invalid logo image" });
@@ -63,6 +69,10 @@ const createTeam = async (req, res) => {
         if (!auctionDoc) return res.status(404).json({ success: false, message: "Auction not found" });
         if (!ownerDoc || !ownerDoc.isActive) return res.status(404).json({ success: false, message: "Team owner not found or inactive" });
 
+        // NOTE: this findOne is a best-effort pre-check only. The real
+        // guarantee against duplicate team names now comes from the
+        // unique index on { auction, name } in the Team model — see
+        // the error.code === 11000 handling below.
         const existingTeam = await Team.findOne({ name: name.trim(), auction });
         if (existingTeam) return res.status(409).json({ success: false, message: "A team with this name already exists in this auction" });
 
@@ -70,6 +80,7 @@ const createTeam = async (req, res) => {
         if (req.file) {
             const result = await uploadToCloudinary(req.file.buffer, "auctionpro/teams");
             logo = { url: result.secure_url, publicId: result.public_id };
+            uploadedLogo = logo.publicId;
         }
 
         const team = await Team.create({
@@ -90,7 +101,18 @@ const createTeam = async (req, res) => {
         return res.status(201).json({ success: true, message: "Team created successfully", team: populatedTeam });
     } catch (error) {
         console.error("Create team error:", error);
-        if (error.code === 11000) return res.status(409).json({ success: false, message: "Team already exists" });
+
+        // The DB write failed after the logo was already uploaded —
+        // delete it rather than leaving it billed and unreferenced.
+        if (uploadedLogo) {
+            try {
+                await deleteFromCloudinary(uploadedLogo);
+            } catch (cleanupError) {
+                console.error("Failed to clean up orphaned team logo:", cleanupError.message);
+            }
+        }
+
+        if (error.code === 11000) return res.status(409).json({ success: false, message: "A team with this name already exists in this auction" });
         if (error.name === "ValidationError") return res.status(400).json({ success: false, message: "Invalid team data" });
         return res.status(500).json({ success: false, message: "Failed to create team" });
     }

@@ -1,23 +1,35 @@
 const Auction = require("../models/Auction");
 const AuctionTransaction = require("../models/AuctionTransaction");
 
+// Shared pagination clamp, matching what getAuctionHistory already did —
+// used now by every endpoint in this file instead of just one of them.
+const getPagination = (query) => {
+    const pageNumber = Math.max(Number(query.page) || 1, 1);
+    const limitNumber = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+    const skip = (pageNumber - 1) * limitNumber;
+    return { pageNumber, limitNumber, skip };
+};
+
+const buildPaginationMeta = (pageNumber, limitNumber, total) => {
+    const totalPages = Math.ceil(total / limitNumber);
+    return {
+        currentPage: pageNumber,
+        totalPages,
+        totalItems: total,
+        limit: limitNumber,
+        hasNextPage: pageNumber < totalPages,
+        hasPreviousPage: pageNumber > 1,
+    };
+};
 
 // GET COMPLETE AUCTION HISTORY
 
 const getAuctionHistory = async (req, res) => {
     try {
         const { auctionId } = req.params;
+        const { type } = req.query;
 
-        const {
-            page = 1,
-            limit = 20,
-            type,
-        } = req.query;
-
-        // Check auction
-
-        const auction = await Auction.findById(auctionId)
-            .select("name status date");
+        const auction = await Auction.findById(auctionId).select("name status date");
 
         if (!auction) {
             return res.status(404).json({
@@ -26,125 +38,38 @@ const getAuctionHistory = async (req, res) => {
             });
         }
 
+        const filter = { auction: auctionId };
 
-        // Build filter
-
-        const filter = {
-            auction: auctionId,
-        };
-
-        if (
-            type &&
-            ["bid", "sold", "unsold"].includes(type)
-        ) {
+        if (type && ["bid", "sold", "unsold"].includes(type)) {
             filter.type = type;
         }
 
-        // Pagination
+        const { pageNumber, limitNumber, skip } = getPagination(req.query);
 
-        const pageNumber = Math.max(
-            Number(page),
-            1
-        );
+        const transactions = await AuctionTransaction.find(filter)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limitNumber)
+            .populate("player", "fullName lastName photo role basePrice soldPrice status")
+            .populate("team", "name logo ownerName")
+            .populate("createdBy", "name email");
 
-        const limitNumber = Math.min(
-            Math.max(Number(limit), 1),
-            100
-        );
-
-        const skip =
-            (pageNumber - 1) *
-            limitNumber;
-
-
-        // Get transactions
-
-        const transactions =
-            await AuctionTransaction.find(filter)
-                .sort({
-                    createdAt: -1,
-                })
-                .skip(skip)
-                .limit(limitNumber)
-                .populate(
-                    "player",
-                    `
-                    fullName
-                    lastName
-                    photo
-                    role
-                    basePrice
-                    soldPrice
-                    status
-                    `
-                )
-                .populate(
-                    "team",
-                    `
-                    name
-                    logo
-                    ownerName
-                    `
-                )
-                .populate(
-                    "createdBy",
-                    "name email"
-                );
-
-        // Total transactions
-
-        const totalTransactions =
-            await AuctionTransaction.countDocuments(
-                filter
-            );
-
-        const totalPages =
-            Math.ceil(
-                totalTransactions /
-                limitNumber
-            );
-
-        // Response
+        const totalTransactions = await AuctionTransaction.countDocuments(filter);
 
         res.status(200).json({
             success: true,
-
             data: {
                 auction,
-
                 transactions,
-
-                pagination: {
-                    currentPage:
-                        pageNumber,
-
-                    totalPages,
-
-                    totalTransactions,
-
-                    limit:
-                        limitNumber,
-
-                    hasNextPage:
-                        pageNumber < totalPages,
-
-                    hasPreviousPage:
-                        pageNumber > 1,
-                },
+                pagination: buildPaginationMeta(pageNumber, limitNumber, totalTransactions),
             },
         });
-
     } catch (error) {
-
-        console.error(
-            "Get Auction History Error:",
-            error
-        );
+        console.error("Get Auction History Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Failed to get auction history",
+            message: "Failed to get auction history",
             // Do not expose internal error details in API responses.
         });
     }
@@ -156,9 +81,7 @@ const getSoldPlayersHistory = async (req, res) => {
     try {
         const { auctionId } = req.params;
 
-        const auction = await Auction.findById(
-            auctionId
-        ).select("name status");
+        const auction = await Auction.findById(auctionId).select("name status");
 
         if (!auction) {
             return res.status(404).json({
@@ -167,66 +90,35 @@ const getSoldPlayersHistory = async (req, res) => {
             });
         }
 
+        const filter = { auction: auctionId, type: "sold" };
+        const { pageNumber, limitNumber, skip } = getPagination(req.query);
 
-        const soldTransactions =
-            await AuctionTransaction.find({
-                auction: auctionId,
-                type: "sold",
-            })
-                .sort({
-                    createdAt: -1,
-                })
-                .populate(
-                    "player",
-                    `
-                    fullName
-                    lastName
-                    photo
-                    role
-                    basePrice
-                    soldPrice
-                    status
-                    `
-                )
-                .populate(
-                    "team",
-                    `
-                    name
-                    logo
-                    ownerName
-                    `
-                )
-                .populate(
-                    "createdBy",
-                    "name email"
-                );
-
+        const [soldTransactions, total] = await Promise.all([
+            AuctionTransaction.find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNumber)
+                .populate("player", "fullName lastName photo role basePrice soldPrice status")
+                .populate("team", "name logo ownerName")
+                .populate("createdBy", "name email"),
+            AuctionTransaction.countDocuments(filter),
+        ]);
 
         res.status(200).json({
             success: true,
-
             data: {
                 auction,
-
-                count:
-                    soldTransactions.length,
-
-                players:
-                    soldTransactions,
+                count: soldTransactions.length,
+                players: soldTransactions,
+                pagination: buildPaginationMeta(pageNumber, limitNumber, total),
             },
         });
-
     } catch (error) {
-
-        console.error(
-            "Get Sold Players History Error:",
-            error
-        );
+        console.error("Get Sold Players History Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Failed to get sold players history",
+            message: "Failed to get sold players history",
             // Do not expose internal error details in API responses.
         });
     }
@@ -238,9 +130,7 @@ const getUnsoldPlayersHistory = async (req, res) => {
     try {
         const { auctionId } = req.params;
 
-        const auction = await Auction.findById(
-            auctionId
-        ).select("name status");
+        const auction = await Auction.findById(auctionId).select("name status");
 
         if (!auction) {
             return res.status(404).json({
@@ -249,65 +139,35 @@ const getUnsoldPlayersHistory = async (req, res) => {
             });
         }
 
+        const filter = { auction: auctionId, type: "unsold" };
+        const { pageNumber, limitNumber, skip } = getPagination(req.query);
 
-        const unsoldTransactions =
-            await AuctionTransaction.find({
-                auction: auctionId,
-                type: "unsold",
-            })
-                .sort({
-                    createdAt: -1,
-                })
-                .populate(
-                    "player",
-                    `
-                    fullName
-                    lastName
-                    photo
-                    role
-                    basePrice
-                    status
-                    `
-                )
-                .populate(
-                    "team",
-                    `
-                    name
-                    logo
-                    ownerName
-                    `
-                )
-                .populate(
-                    "createdBy",
-                    "name email"
-                );
-
+        const [unsoldTransactions, total] = await Promise.all([
+            AuctionTransaction.find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNumber)
+                .populate("player", "fullName lastName photo role basePrice status")
+                .populate("team", "name logo ownerName")
+                .populate("createdBy", "name email"),
+            AuctionTransaction.countDocuments(filter),
+        ]);
 
         res.status(200).json({
             success: true,
-
             data: {
                 auction,
-
-                count:
-                    unsoldTransactions.length,
-
-                players:
-                    unsoldTransactions,
+                count: unsoldTransactions.length,
+                players: unsoldTransactions,
+                pagination: buildPaginationMeta(pageNumber, limitNumber, total),
             },
         });
-
     } catch (error) {
-
-        console.error(
-            "Get Unsold Players History Error:",
-            error
-        );
+        console.error("Get Unsold Players History Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Failed to get unsold players history",
+            message: "Failed to get unsold players history",
             // Do not expose internal error details in API responses.
         });
     }
@@ -319,9 +179,7 @@ const getAuctionBidHistory = async (req, res) => {
     try {
         const { auctionId } = req.params;
 
-        const auction = await Auction.findById(
-            auctionId
-        ).select("name status");
+        const auction = await Auction.findById(auctionId).select("name status");
 
         if (!auction) {
             return res.status(404).json({
@@ -330,139 +188,72 @@ const getAuctionBidHistory = async (req, res) => {
             });
         }
 
+        const filter = { auction: auctionId, type: "bid" };
+        const { pageNumber, limitNumber, skip } = getPagination(req.query);
 
-        const bids =
-            await AuctionTransaction.find({
-                auction: auctionId,
-                type: "bid",
-            })
-                .sort({
-                    createdAt: -1,
-                })
-                .populate(
-                    "player",
-                    `
-                    fullName
-                    lastName
-                    photo
-                    role
-                    basePrice
-                    `
-                )
-                .populate(
-                    "team",
-                    `
-                    name
-                    logo
-                    ownerName
-                    `
-                )
-                .populate(
-                    "createdBy",
-                    "name email"
-                );
-
+        const [bids, total] = await Promise.all([
+            AuctionTransaction.find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNumber)
+                .populate("player", "fullName lastName photo role basePrice")
+                .populate("team", "name logo ownerName")
+                .populate("createdBy", "name email"),
+            AuctionTransaction.countDocuments(filter),
+        ]);
 
         res.status(200).json({
             success: true,
-
             data: {
                 auction,
-
-                count:
-                    bids.length,
-
+                count: bids.length,
                 bids,
+                pagination: buildPaginationMeta(pageNumber, limitNumber, total),
             },
         });
-
     } catch (error) {
-
-        console.error(
-            "Get Auction Bid History Error:",
-            error
-        );
+        console.error("Get Auction Bid History Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Failed to get auction bid history",
+            message: "Failed to get auction bid history",
             // Do not expose internal error details in API responses.
         });
     }
 };
 
 // GET PLAYER TRANSACTION HISTORY
+//
+// Not paginated: this one is scoped to a single player, so its result
+// set is naturally small (bounded by how many bids that one player
+// received, not by the whole auction) — left as a full find() on
+// purpose, unlike the four auction-wide endpoints above.
 
-const getPlayerTransactionHistory = async (
-    req,
-    res
-) => {
+const getPlayerTransactionHistory = async (req, res) => {
     try {
         const { playerId } = req.params;
 
-        const transactions =
-            await AuctionTransaction.find({
-                player: playerId,
-            })
-                .sort({
-                    createdAt: 1,
-                })
-                .populate(
-                    "player",
-                    `
-                    fullName
-                    lastName
-                    photo
-                    role
-                    basePrice
-                    currentBid
-                    soldPrice
-                    status
-                    `
-                )
-                .populate(
-                    "team",
-                    `
-                    name
-                    logo
-                    ownerName
-                    `
-                )
-                .populate(
-                    "auction",
-                    "name status"
-                )
-                .populate(
-                    "createdBy",
-                    "name email"
-                );
-
+        const transactions = await AuctionTransaction.find({ player: playerId })
+            .sort({ createdAt: 1 })
+            .populate("player", "fullName lastName photo role basePrice currentBid soldPrice status")
+            .populate("team", "name logo ownerName")
+            .populate("auction", "name status")
+            .populate("createdBy", "name email");
 
         res.status(200).json({
             success: true,
-
             data: {
                 playerId,
-
-                count:
-                    transactions.length,
-
+                count: transactions.length,
                 transactions,
             },
         });
-
     } catch (error) {
-
-        console.error(
-            "Get Player Transaction History Error:",
-            error
-        );
+        console.error("Get Player Transaction History Error:", error);
 
         res.status(500).json({
             success: false,
-            message:
-                "Failed to get player transaction history",
+            message: "Failed to get player transaction history",
             // Do not expose internal error details in API responses.
         });
     }
