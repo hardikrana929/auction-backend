@@ -14,6 +14,11 @@ const {
     adminOnly,
 } = require("../middleware/authMiddleware");
 
+// Same multer instance already used elsewhere in the app (memory storage,
+// JPEG/PNG only, 2MB limit) — reused here so auction banners are validated
+// the exact same way as team logos / player photos.
+const upload = require("../middleware/uploadMiddleware");
+
 const router = express.Router();
 
 // PUBLIC / AUTHENTICATED
@@ -31,6 +36,7 @@ router.post(
     "/",
     protectRoute,
     adminOnly,
+    upload.single("image"),
     createAuction
 );
 
@@ -39,6 +45,7 @@ router.put(
     "/:id",
     protectRoute,
     adminOnly,
+    upload.single("image"),
     updateAuction
 );
 

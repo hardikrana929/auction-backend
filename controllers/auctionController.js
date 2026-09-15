@@ -1,116 +1,146 @@
 const mongoose = require("mongoose");
 const Auction = require("../models/Auction");
 const asyncHandler = require("../utils/asyncHandler");
+const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryUpload");
+const { validateImageBuffer } = require("../utils/imageValidation");
 
 // Auction creation
 
 const createAuction = asyncHandler(async (req, res) => {
-    const {
-        name,
-        description,
-        image,
-        date,
-        startingBudget,
-        minimumBid,
-        bidIncrement,
-        maxTeams,
-        maxPlayersPerTeam,
-    } = req.body;
+    // Tracks whether we've uploaded a banner this request, so it can be
+    // cleaned up on Cloudinary if the DB write below fails for any reason
+    // (validation error, etc). Without this, a failed create still leaves
+    // a billed, orphaned asset — same pattern as createTeam.
+    let uploadedImage = null;
 
-    // Required fields
-    if (
-        !name ||
-        !date ||
-        startingBudget === undefined ||
-        minimumBid === undefined ||
-        bidIncrement === undefined ||
-        maxTeams === undefined ||
-        maxPlayersPerTeam === undefined
-    ) {
-        return res.status(400).json({
-            success: false,
-            message: "Please provide all required auction details",
+    try {
+        if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid banner image",
+            });
+        }
+
+        const {
+            name,
+            description,
+            date,
+            startingBudget,
+            minimumBid,
+            bidIncrement,
+            maxTeams,
+            maxPlayersPerTeam,
+        } = req.body;
+
+        // Required fields
+        if (
+            !name ||
+            !date ||
+            startingBudget === undefined ||
+            minimumBid === undefined ||
+            bidIncrement === undefined ||
+            maxTeams === undefined ||
+            maxPlayersPerTeam === undefined
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide all required auction details",
+            });
+        }
+
+        // Validate date
+        const auctionDate = new Date(date);
+
+        if (isNaN(auctionDate.getTime())) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid auction date",
+            });
+        }
+
+        // Date should be future
+        if (auctionDate <= new Date()) {
+            return res.status(400).json({
+                success: false,
+                message: "Auction date must be in the future",
+            });
+        }
+
+        // Validate numbers
+        if (startingBudget <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Starting budget must be greater than 0",
+            });
+        }
+
+        if (minimumBid <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Minimum bid must be greater than 0",
+            });
+        }
+
+        if (bidIncrement <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Bid increment must be greater than 0",
+            });
+        }
+
+        if (maxTeams < 2) {
+            return res.status(400).json({
+                success: false,
+                message: "Auction must have at least 2 teams",
+            });
+        }
+
+        if (maxPlayersPerTeam < 1) {
+            return res.status(400).json({
+                success: false,
+                message: "Players per team must be at least 1",
+            });
+        }
+
+        let image = "";
+        if (req.file) {
+            const result = await uploadToCloudinary(req.file.buffer, "auctionpro/auctions");
+            image = result.secure_url;
+            uploadedImage = result.public_id;
+        }
+
+        // Create auction
+        const auction = await Auction.create({
+            name,
+            description,
+            image,
+            date: auctionDate,
+            startingBudget,
+            minimumBid,
+            bidIncrement,
+            maxTeams,
+            maxPlayersPerTeam,
+            status: "upcoming",
+            createdBy: req.user._id,
         });
-    }
 
-    // Validate date
-    const auctionDate = new Date(date);
-
-    if (isNaN(auctionDate.getTime())) {
-        return res.status(400).json({
-            success: false,
-            message: "Invalid auction date",
+        res.status(201).json({
+            success: true,
+            message: "Auction created successfully",
+            auction,
         });
+    } catch (error) {
+        // The DB write failed after the banner was already uploaded —
+        // delete it rather than leaving it billed and unreferenced.
+        if (uploadedImage) {
+            try {
+                await deleteFromCloudinary(uploadedImage);
+            } catch (cleanupError) {
+                console.error("Failed to clean up orphaned auction banner:", cleanupError.message);
+            }
+        }
+        throw error;
     }
-
-    // Date should be future
-    if (auctionDate <= new Date()) {
-        return res.status(400).json({
-            success: false,
-            message: "Auction date must be in the future",
-        });
-    }
-
-    // Validate numbers
-    if (startingBudget <= 0) {
-        return res.status(400).json({
-            success: false,
-            message: "Starting budget must be greater than 0",
-        });
-    }
-
-    if (minimumBid <= 0) {
-        return res.status(400).json({
-            success: false,
-            message: "Minimum bid must be greater than 0",
-        });
-    }
-
-    if (bidIncrement <= 0) {
-        return res.status(400).json({
-            success: false,
-            message: "Bid increment must be greater than 0",
-        });
-    }
-
-    if (maxTeams < 2) {
-        return res.status(400).json({
-            success: false,
-            message: "Auction must have at least 2 teams",
-        });
-    }
-
-    if (maxPlayersPerTeam < 1) {
-        return res.status(400).json({
-            success: false,
-            message: "Players per team must be at least 1",
-        });
-    }
-
-    // Create auction
-    // Any unexpected failure here (e.g. a Mongoose ValidationError we
-    // didn't already check for above) is caught by asyncHandler and
-    // forwarded to errorMiddleware.js, which knows how to turn it into
-    // a proper field-level 400 instead of a generic 500.
-    const auction = await Auction.create({
-        name,
-        description,
-        image,
-        date: auctionDate,
-        startingBudget,
-        minimumBid,
-        bidIncrement,
-        maxTeams,
-        maxPlayersPerTeam,
-        status: "upcoming",
-        createdBy: req.user._id,
-    });
-
-    res.status(201).json({
-        success: true,
-        message: "Auction created successfully",
-        auction,
-    });
 });
 
 // Get all Auctions
@@ -167,6 +197,13 @@ const updateAuction = asyncHandler(async (req, res) => {
         });
     }
 
+    if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid banner image",
+        });
+    }
+
     const auction = await Auction.findById(id);
 
     if (!auction) {
@@ -184,10 +221,11 @@ const updateAuction = asyncHandler(async (req, res) => {
         });
     }
 
+    // "image" is handled separately below (file upload / removal), so it's
+    // deliberately left out of this generic text-field loop.
     const allowedFields = [
         "name",
         "description",
-        "image",
         "date",
         "startingBudget",
         "minimumBid",
@@ -201,6 +239,17 @@ const updateAuction = asyncHandler(async (req, res) => {
             auction[field] = req.body[field];
         }
     });
+
+    // Image: a new upload replaces it, an explicit removeImage flag clears
+    // it, and otherwise (no file, no flag) the existing image is left alone.
+    // NOTE: unlike team logos, the previous Cloudinary asset isn't deleted
+    // here — Auction.image only stores the URL, not a publicId to delete by.
+    if (req.file) {
+        const result = await uploadToCloudinary(req.file.buffer, "auctionpro/auctions");
+        auction.image = result.secure_url;
+    } else if (req.body.removeImage === "true") {
+        auction.image = "";
+    }
 
     // Validate date if changed
     if (req.body.date) {
