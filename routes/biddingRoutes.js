@@ -1,73 +1,79 @@
 const express = require("express");
 
+const router =
+    express.Router();
+
 const {
-    startPlayerAuction,
     placeBid,
+    getCurrentBid,
+    getBidHistory,
     sellPlayer,
     markPlayerUnsold,
-    getCurrentAuctionPlayer,
-    getBidHistory,
-} = require("../controllers/biddingController");
+} = require(
+    "../controllers/biddingController",
+);
 
 const {
     protectRoute,
     adminOnly,
-} = require("../middleware/authMiddleware");
+} = require(
+    "../middleware/authMiddleware",
+);
 
-const router = express.Router();
+/*
+|--------------------------------------------------------------------------
+| Team bidding
+|--------------------------------------------------------------------------
+*/
 
-// CURRENT AUCTION PLAYER
+router.post(
+    "/place",
+    protectRoute,
+    placeBid,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Current auction state
+|--------------------------------------------------------------------------
+*/
 
 router.get(
     "/current/:auctionId",
     protectRoute,
-    getCurrentAuctionPlayer
+    getCurrentBid,
 );
 
-// BID
+/*
+|--------------------------------------------------------------------------
+| Bid history
+|--------------------------------------------------------------------------
+*/
 
-router.post(
-    "/bid",
+router.get(
+    "/history/:playerId",
     protectRoute,
-    placeBid
+    getBidHistory,
 );
 
-// START PLAYER
-// ADMIN ONLY
-
-router.post(
-    "/start",
-    protectRoute,
-    adminOnly,
-    startPlayerAuction
-);
-
-// SELL PLAYER
-// ADMIN ONLY
+/*
+|--------------------------------------------------------------------------
+| Admin controls
+|--------------------------------------------------------------------------
+*/
 
 router.post(
     "/sell",
     protectRoute,
     adminOnly,
-    sellPlayer
+    sellPlayer,
 );
-
-// UNSOLD
-// ADMIN ONLY
 
 router.post(
     "/unsold",
     protectRoute,
     adminOnly,
-    markPlayerUnsold
-);
-
-// BID HISTORY
-
-router.get(
-    "/history/:playerId",
-    protectRoute,
-    getBidHistory
+    markPlayerUnsold,
 );
 
 module.exports = router;

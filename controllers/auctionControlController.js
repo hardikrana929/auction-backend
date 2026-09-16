@@ -145,24 +145,17 @@ const startAuction = async (
 
         auctionSession.status = "live";
 
-        auctionSession.isPaused =
-            false;
+        auctionSession.isPaused = false;
 
-        auctionSession.startedAt =
-            auctionSession.startedAt ||
-            new Date();
+        auctionSession.startedAt = auctionSession.startedAt || new Date();
 
-        auctionSession.totalPlayers =
-            totalPlayers;
+        auctionSession.totalPlayers = totalPlayers;
 
-        auctionSession.lastAction =
-            "auction_started";
+        auctionSession.lastAction = "auction_started";
 
-        auctionSession.lastActionAt =
-            new Date();
+        auctionSession.lastActionAt = new Date();
 
-        auctionSession.controlledBy =
-            req.user._id;
+        auctionSession.controlledBy = req.user._id;
 
         await auctionSession.save({
             session,
@@ -187,10 +180,29 @@ const startAuction = async (
                 "auction:started",
                 {
                     auctionId,
+
                     status: "live",
+
                     startedAt:
                         auctionSession.startedAt,
+
                     totalPlayers,
+
+                    auction: {
+                        _id: auction._id,
+                        name: auction.name,
+                        status: auction.status,
+                    },
+
+                    session: {
+                        status: auctionSession.status,
+                        isPaused:
+                            auctionSession.isPaused,
+                        currentPlayer:
+                            auctionSession.currentPlayer,
+                        currentPlayerIndex:
+                            auctionSession.currentPlayerIndex,
+                    },
                 }
             );
         }
@@ -694,27 +706,52 @@ const startNextPlayer = async (
                 {
                     auctionId,
 
+                    status: "player_auction",
+
                     player: {
-                        id:
-                            nextPlayer._id,
+                        id: nextPlayer._id,
+                        _id: nextPlayer._id,
+
                         fullName:
                             nextPlayer.fullName,
+
                         lastName:
                             nextPlayer.lastName,
+
                         photo:
                             nextPlayer.photo,
+
                         role:
                             nextPlayer.role,
+
                         battingHand:
                             nextPlayer.battingHand,
+
                         bowlingStyle:
                             nextPlayer.bowlingStyle,
+
                         basePrice:
                             nextPlayer.basePrice,
+
                         currentBid:
                             nextPlayer.currentBid,
+
+                        currentBidder: null,
+
                         status:
                             nextPlayer.status,
+                    },
+
+                    auctionSession: {
+                        currentPlayer:
+                            nextPlayer._id,
+
+                        currentPlayerIndex:
+                            nextPlayer.auctionOrder,
+
+                        status: "player_auction",
+
+                        isPaused: false,
                     },
                 }
             );

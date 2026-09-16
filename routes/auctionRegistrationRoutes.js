@@ -63,9 +63,9 @@ router.put(
 router.get(
     "/:auctionId",
     protectRoute,
+    adminOnly,
     getAuctionRegistrations
 );
-
 
 // Get registration status for a specific team
 router.get(

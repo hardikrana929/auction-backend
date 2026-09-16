@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 const Team = require("../models/Team");
 const Auction = require("../models/Auction");
 const User = require("../models/User");
@@ -6,6 +7,36 @@ const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinar
 const { validateImageBuffer } = require("../utils/imageValidation");
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+// The team owner is identified by email now instead of a raw user ID —
+// the UI collects "Owner name / Owner email / Owner phone" and expects
+// the account to be matched automatically, or created on the fly if no
+// user with that email exists yet. A newly-created owner gets a random
+// password (never shown/emailed here) and can get in later via the
+// existing forgotPassword/resetPassword flow on their email.
+const findOrCreateOwner = async (ownerEmail, ownerName) => {
+    const email = ownerEmail.trim().toLowerCase();
+
+    let user = await User.findOne({ email }).select("name email role isActive");
+    if (user) {
+        if (!user.isActive) {
+            const err = new Error("Team owner account is inactive");
+            err.statusCode = 409;
+            throw err;
+        }
+        return user;
+    }
+
+    const randomPassword = crypto.randomBytes(24).toString("hex");
+    user = await User.create({
+        name: ownerName.trim(),
+        email,
+        password: randomPassword,
+        role: "user",
+    });
+    return user;
+};
 
 const getTeamsByAuction = async (req, res) => {
     try {
@@ -53,27 +84,28 @@ const createTeam = async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid logo image" });
         }
 
-        const { name, owner, ownerName, auction, status } = req.body;
+        const { name, ownerName, ownerEmail, ownerPhone, auctionId, status } = req.body;
 
-        if (!name || !auction || !owner || !ownerName) {
-            return res.status(400).json({ success: false, message: "name, ownerName, owner and auction are required" });
+        if (!name || !ownerName || !ownerEmail || !auctionId) {
+            return res.status(400).json({ success: false, message: "name, ownerName, ownerEmail and auctionId are required" });
         }
-        if (![auction, owner].every(isValidObjectId)) {
-            return res.status(400).json({ success: false, message: "Invalid auction or owner ID" });
+        if (!isValidObjectId(auctionId)) {
+            return res.status(400).json({ success: false, message: "Invalid auction ID" });
+        }
+        if (!isValidEmail(ownerEmail)) {
+            return res.status(400).json({ success: false, message: "Invalid owner email" });
         }
 
-        const [auctionDoc, ownerDoc] = await Promise.all([
-            Auction.findById(auction),
-            User.findById(owner).select("name email role isActive"),
-        ]);
+        const auctionDoc = await Auction.findById(auctionId);
         if (!auctionDoc) return res.status(404).json({ success: false, message: "Auction not found" });
-        if (!ownerDoc || !ownerDoc.isActive) return res.status(404).json({ success: false, message: "Team owner not found or inactive" });
+
+        const ownerDoc = await findOrCreateOwner(ownerEmail, ownerName);
 
         // NOTE: this findOne is a best-effort pre-check only. The real
         // guarantee against duplicate team names now comes from the
         // unique index on { auction, name } in the Team model — see
         // the error.code === 11000 handling below.
-        const existingTeam = await Team.findOne({ name: name.trim(), auction });
+        const existingTeam = await Team.findOne({ name: name.trim(), auction: auctionId });
         if (existingTeam) return res.status(409).json({ success: false, message: "A team with this name already exists in this auction" });
 
         let logo = { url: "", publicId: "" };
@@ -85,9 +117,12 @@ const createTeam = async (req, res) => {
 
         const team = await Team.create({
             name: name.trim(),
-            owner,
+            owner: ownerDoc._id,
             ownerName: ownerName.trim(),
-            auction,
+            // ownerPhone isn't in the Team or User schema yet — accepted
+            // from the form but not persisted until one of those models
+            // adds a phone field. Harmless to receive and drop for now.
+            auction: auctionId,
             totalBudget: auctionDoc.startingBudget,
             remainingBudget: auctionDoc.startingBudget,
             logo: logo || undefined,
@@ -112,7 +147,16 @@ const createTeam = async (req, res) => {
             }
         }
 
-        if (error.code === 11000) return res.status(409).json({ success: false, message: "A team with this name already exists in this auction" });
+        if (error.statusCode) return res.status(error.statusCode).json({ success: false, message: error.message });
+        if (error.code === 11000) {
+            // Could be the { auction, name } team index OR the unique
+            // email index on User (a race where two requests try to
+            // create the same brand-new owner at once).
+            const message = error.keyPattern?.email
+                ? "A user with this email already exists"
+                : "A team with this name already exists in this auction";
+            return res.status(409).json({ success: false, message });
+        }
         if (error.name === "ValidationError") return res.status(400).json({ success: false, message: "Invalid team data" });
         return res.status(500).json({ success: false, message: "Failed to create team" });
     }
@@ -127,30 +171,40 @@ const updateTeam = async (req, res) => {
         const { id } = req.params;
         if (!isValidObjectId(id)) return res.status(400).json({ success: false, message: "Invalid team ID" });
 
-        const allowedFields = ["name", "owner", "ownerName", "auction", "status"];
-        const updateData = {};
-        for (const field of allowedFields) {
-            if (req.body[field] !== undefined) updateData[field] = req.body[field];
-        }
+        const existingTeam = await Team.findById(id);
+        if (!existingTeam) return res.status(404).json({ success: false, message: "Team not found" });
 
-        if (updateData.name !== undefined) {
-            updateData.name = String(updateData.name).trim();
+        const { name, ownerName, ownerEmail, auctionId, status } = req.body;
+        const updateData = {};
+
+        if (name !== undefined) {
+            updateData.name = String(name).trim();
             if (!updateData.name) return res.status(400).json({ success: false, message: "Team name cannot be empty" });
         }
-        if (updateData.ownerName !== undefined) {
-            updateData.ownerName = String(updateData.ownerName).trim();
+        if (ownerName !== undefined) {
+            updateData.ownerName = String(ownerName).trim();
             if (!updateData.ownerName) return res.status(400).json({ success: false, message: "Owner name cannot be empty" });
         }
-        if (updateData.owner !== undefined && !isValidObjectId(updateData.owner)) return res.status(400).json({ success: false, message: "Invalid owner ID" });
-        if (updateData.auction !== undefined && !isValidObjectId(updateData.auction)) return res.status(400).json({ success: false, message: "Invalid auction ID" });
-        if (updateData.status !== undefined && !["active", "inactive"].includes(updateData.status)) return res.status(400).json({ success: false, message: "Invalid team status" });
+        if (auctionId !== undefined) {
+            if (!isValidObjectId(auctionId)) return res.status(400).json({ success: false, message: "Invalid auction ID" });
+            updateData.auction = auctionId;
+        }
+        if (status !== undefined && !["active", "inactive"].includes(status)) {
+            return res.status(400).json({ success: false, message: "Invalid team status" });
+        }
+        if (status !== undefined) updateData.status = status;
+
+        // Owner is re-resolved by email the same way createTeam does —
+        // find the matching user, or create one if this is a new email.
+        if (ownerEmail !== undefined) {
+            if (!isValidEmail(ownerEmail)) return res.status(400).json({ success: false, message: "Invalid owner email" });
+            const ownerDoc = await findOrCreateOwner(ownerEmail, ownerName ?? existingTeam.ownerName);
+            updateData.owner = ownerDoc._id;
+        }
 
         // Budget is intentionally not client-updatable. It is controlled by auction/bidding logic.
         delete updateData.totalBudget;
         delete updateData.remainingBudget;
-
-        const existingTeam = await Team.findById(id);
-        if (!existingTeam) return res.status(404).json({ success: false, message: "Team not found" });
 
         if (req.file) {
             const result = await uploadToCloudinary(req.file.buffer, "auctionpro/teams");
@@ -175,7 +229,13 @@ const updateTeam = async (req, res) => {
         return res.status(200).json({ success: true, message: "Team updated successfully", team });
     } catch (error) {
         console.error("Update team error:", error);
-        if (error.code === 11000) return res.status(409).json({ success: false, message: "Team already exists" });
+        if (error.statusCode) return res.status(error.statusCode).json({ success: false, message: error.message });
+        if (error.code === 11000) {
+            const message = error.keyPattern?.email
+                ? "A user with this email already exists"
+                : "Team already exists";
+            return res.status(409).json({ success: false, message });
+        }
         return res.status(500).json({ success: false, message: "Failed to update team" });
     }
 };
