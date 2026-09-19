@@ -188,6 +188,12 @@ const leaveTeam = (socket, teamId) => {
 
 // Register Socket Events
 const registerAuctionSocketEvents = (io, socket) => {
+    // Keep authenticated users in a private notification room so
+    // emitNewNotification() can deliver real-time notifications.
+    if (socket.user?._id) {
+        socket.join(`user:${socket.user._id}`);
+    }
+
     console.log(`Socket connected: ${socket.id}`);
 
     // Join auction
