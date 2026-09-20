@@ -624,17 +624,19 @@ const startNextPlayer = async (
         // Find next available player
         // ------------------------------------------
 
+        // A player leaves "available" as soon as they are sold/unsold, so the
+        // lowest remaining auctionOrder is always the next one. The old
+        // "auctionOrder > currentPlayerIndex" filter skipped every player who had
+        // the default order 0 (or the same order as the previous player), which
+        // produced "No more players available" after the very first player.
         const nextPlayer =
             await Player.findOne({
                 auction: auctionId,
                 status: "available",
-                auctionOrder: {
-                    $gt:
-                        auctionSession.currentPlayerIndex,
-                },
             })
                 .sort({
                     auctionOrder: 1,
+                    createdAt: 1,
                 })
                 .session(session);
 

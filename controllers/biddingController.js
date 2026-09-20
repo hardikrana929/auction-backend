@@ -6,7 +6,10 @@ const Team = require("../models/Team");
 const Auction = require("../models/Auction");
 const AuctionRegistration = require("../models/AuctionRegistration");
 
-const { getAuctionRoom } = require("../socket/socketServer");
+// NOTE: socketServer.js only exports initializeSocket(), so importing
+// getAuctionRoom from it gave `undefined` and crashed right after a bid was saved.
+// auctionSocket.js is where this helper really lives.
+const { getAuctionRoom } = require("../socket/auctionSocket");
 
 /*
 |--------------------------------------------------------------------------
@@ -40,6 +43,88 @@ const getTeamId = (req) => {
         req.user?.team?._id ||
         req.user?.team?.id,
     );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Which team may this user bid for?
+|--------------------------------------------------------------------------
+|
+| The frontend does not send a teamId, and the User model has no team field,
+| so the team is looked up from Team.owner. This also stops a user from
+| bidding for somebody else's team by sending its id.
+|
+*/
+
+const resolveOwnTeamId = async ({
+    userId,
+    auctionId,
+    requestedTeamId,
+}) => {
+    if (!mongoose.Types.ObjectId.isValid(auctionId)) {
+        return {
+            error: { status: 400, message: "Invalid auction ID." },
+        };
+    }
+
+    const ownTeams = await Team.find({
+        auction: auctionId,
+        owner: userId,
+        status: "active",
+    }).select("_id");
+
+    if (!ownTeams.length) {
+        return {
+            error: {
+                status: 403,
+                message: "No team is associated with this account.",
+            },
+        };
+    }
+
+    const ownIds = ownTeams.map((team) => String(team._id));
+
+    if (requestedTeamId) {
+        if (!ownIds.includes(String(requestedTeamId))) {
+            return {
+                error: {
+                    status: 403,
+                    message: "You can only bid for your own team.",
+                },
+            };
+        }
+
+        return { teamId: String(requestedTeamId) };
+    }
+
+    const approved = await AuctionRegistration.find({
+        auction: auctionId,
+        team: { $in: ownIds },
+        status: "approved",
+    }).select("team");
+
+    const approvedIds = approved.map((item) => String(item.team));
+
+    if (approvedIds.length === 1) {
+        return { teamId: approvedIds[0] };
+    }
+
+    if (approvedIds.length > 1) {
+        return {
+            error: {
+                status: 400,
+                message:
+                    "You have more than one approved team in this auction. Please choose a team.",
+            },
+        };
+    }
+
+    return {
+        error: {
+            status: 403,
+            message: "Team registration is not approved for this auction.",
+        },
+    };
 };
 
 const getIo = (req) => {
@@ -286,7 +371,7 @@ const placeBid = async (
         const authenticatedTeamId =
             getTeamId(req);
 
-        const teamId =
+        let teamId =
             authenticatedTeamId ||
             requestedTeamId;
 
@@ -304,6 +389,24 @@ const placeBid = async (
                 message:
                     "Player ID is required.",
             });
+        }
+
+        // Normal users: find (and verify) their own team. Admins keep the old behaviour.
+        if (req.user?.role !== "admin") {
+            const resolved = await resolveOwnTeamId({
+                userId: getUserId(req),
+                auctionId,
+                requestedTeamId: teamId,
+            });
+
+            if (resolved.error) {
+                return res.status(resolved.error.status).json({
+                    success: false,
+                    message: resolved.error.message,
+                });
+            }
+
+            teamId = resolved.teamId;
         }
 
         if (!teamId) {

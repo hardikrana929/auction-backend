@@ -91,6 +91,21 @@ const getUserProfile = async (req, res) => {
     }
 };
 
+// CLIENT_URL may list several frontends separated by commas (it is also used
+// for CORS). The reset link must use just the first one.
+const getClientUrl = () => {
+    const first = String(process.env.CLIENT_URL || "")
+        .split(",")[0]
+        .trim()
+        .replace(/\/+$/, "");
+
+    if (!first) {
+        throw new Error("CLIENT_URL is not set on the server (needed for the reset link)");
+    }
+
+    return first;
+};
+
 const forgotPassword = async (req, res) => {
     const genericMessage = "If an account exists for this email, a password reset link has been sent.";
 
@@ -113,7 +128,7 @@ const forgotPassword = async (req, res) => {
         await sendPasswordResetEmail({
             to: user.email,
             name: user.name,
-            resetUrl: `${process.env.CLIENT_URL.replace(/\/$/, "")}/reset-password/${rawToken}`,
+            resetUrl: `${getClientUrl()}/reset-password/${rawToken}`,
         });
 
         return res.status(200).json({ success: true, message: genericMessage });
