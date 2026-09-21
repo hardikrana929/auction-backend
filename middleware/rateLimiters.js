@@ -23,10 +23,20 @@ const registerLimiter = rateLimit({
 // an attacker can spam any known email address with reset links.
 const forgotPasswordLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 5,
+    max: 10,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: "Too many requests. Please try again later." },
 });
 
-module.exports = { loginLimiter, registerLimiter, forgotPasswordLimiter };
+// Verify OTP: on top of the per-code attempt limit (5 wrong tries), this
+// slows down anyone trying many e-mail addresses from one IP.
+const verifyOtpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Too many attempts. Please try again later." },
+});
+
+module.exports = { loginLimiter, registerLimiter, forgotPasswordLimiter, verifyOtpLimiter };

@@ -41,6 +41,26 @@ const userSchema = new mongoose.Schema({
     resetPasswordExpires: {
         type: Date,
         select: false
+    },
+
+    // Forgot-password OTP (6-digit code sent by e-mail).
+    // Only a keyed hash of the code is stored, never the code itself.
+    passwordResetOtp: {
+        type: String,
+        select: false
+    },
+    passwordResetOtpExpires: {
+        type: Date,
+        select: false
+    },
+    passwordResetOtpAttempts: {
+        type: Number,
+        default: 0,
+        select: false
+    },
+    passwordResetOtpSentAt: {
+        type: Date,
+        select: false
     }
 
 },

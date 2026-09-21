@@ -135,6 +135,30 @@ const sendPasswordResetEmail = async ({ to, name, resetUrl }) => {
     });
 };
 
+const sendPasswordResetOtpEmail = async ({ to, name, otp }) => {
+    const safeName = String(name || "User").replace(/[<>&"]/g, "");
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
+        <h2>AuctionPro Password Reset</h2>
+        <p>Hello ${safeName},</p>
+        <p>Use this verification code to reset your AuctionPro password:</p>
+        <p style="font-size:34px;font-weight:bold;letter-spacing:10px;margin:24px 0;color:#111827">${otp}</p>
+        <p>This code expires in 10 minutes and can be used only once.</p>
+        <p><b>Never share this code with anyone.</b> If you did not request it, you can safely ignore this email.</p>
+      </div>`;
+
+    const text = `Hello ${name || "User"},\n\nYour AuctionPro verification code is: ${otp}\n\nThis code expires in 10 minutes and can be used only once. Never share it with anyone.\nIf you did not request it, ignore this email.`;
+
+    await sendMail({
+        to,
+        toName: name,
+        subject: "Your AuctionPro verification code",
+        text,
+        html,
+    });
+};
+
 module.exports = {
     createTransporter,
     getProvider,
@@ -142,4 +166,5 @@ module.exports = {
     parseSender,
     sendMail,
     sendPasswordResetEmail,
+    sendPasswordResetOtpEmail,
 };
