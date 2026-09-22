@@ -10,12 +10,16 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 // getAuctionRoom from it gave `undefined` and crashed right after a bid was saved.
 // auctionSocket.js is where this helper really lives.
 const { getAuctionRoom } = require("../socket/auctionSocket");
+const { logTransaction, getAuctionParticipantOwners, notifyUsers } = require("../utils/notify");
 
 /*
 |--------------------------------------------------------------------------
 | Helpers
 |--------------------------------------------------------------------------
 */
+
+const formatRupees = (value) =>
+    `₹${Number(value || 0).toLocaleString("en-IN")}`;
 
 const getId = (value) => {
     if (!value) {
@@ -622,6 +626,16 @@ const placeBid = async (
                     session,
                 });
 
+                await logTransaction({
+                    auction: auction._id,
+                    player: player._id,
+                    team: team._id,
+                    type: "bid",
+                    amount: bidAmount,
+                    createdBy: req.user?._id || req.user?.id,
+                    session,
+                });
+
                 result = {
                     bid,
                     auction,
@@ -1129,6 +1143,48 @@ const sellPlayer = async (
             },
         );
 
+        if (result) {
+            await logTransaction({
+                auction: result.auction._id,
+                player: result.player._id,
+                team: result.team._id,
+                type: "sold",
+                amount: result.soldPrice,
+                createdBy: req.user?._id || req.user?.id,
+            });
+
+            const ownerIds = await getAuctionParticipantOwners(auctionId);
+            const winningOwnerId = String(result.team.owner);
+            const playerName =
+                [result.player.fullName, result.player.lastName].filter(Boolean).join(" ") ||
+                result.player.fullName ||
+                "The player";
+
+            await notifyUsers({
+                io: getIo(req),
+                auction: result.auction._id,
+                player: result.player._id,
+                team: result.team._id,
+                type: "player_sold",
+                recipients: [winningOwnerId],
+                title: "Player sold to your team!",
+                message: `You won ${playerName} for ${formatRupees(result.soldPrice)}.`,
+                data: { soldPrice: result.soldPrice, teamId: result.team._id },
+            });
+
+            await notifyUsers({
+                io: getIo(req),
+                auction: result.auction._id,
+                player: result.player._id,
+                team: result.team._id,
+                type: "player_sold",
+                recipients: ownerIds.filter((id) => id !== winningOwnerId),
+                title: "Player sold",
+                message: `${playerName} was sold to ${result.team.name} for ${formatRupees(result.soldPrice)}.`,
+                data: { soldPrice: result.soldPrice, teamId: result.team._id },
+            });
+        }
+
         const io = getIo(req);
 
         if (io && result) {
@@ -1293,6 +1349,33 @@ const markPlayerUnsold = async (
                 });
             },
         );
+
+        await logTransaction({
+            auction: auctionId,
+            player: player._id,
+            team: null,
+            type: "unsold",
+            amount: 0,
+            createdBy: req.user?._id || req.user?.id,
+        });
+
+        const ownerIds = await getAuctionParticipantOwners(auctionId);
+        const unsoldPlayerName =
+            [player.fullName, player.lastName].filter(Boolean).join(" ") ||
+            player.fullName ||
+            "The player";
+
+        await notifyUsers({
+            io: getIo(req),
+            auction: auctionId,
+            player: player._id,
+            team: null,
+            type: "player_unsold",
+            recipients: ownerIds,
+            title: "Player unsold",
+            message: `${unsoldPlayerName} went unsold.`,
+            data: {},
+        });
 
         const io = getIo(req);
 

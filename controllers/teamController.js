@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const crypto = require("crypto");
 const Team = require("../models/Team");
 const Auction = require("../models/Auction");
 const User = require("../models/User");
@@ -9,32 +8,39 @@ const { validateImageBuffer } = require("../utils/imageValidation");
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-// The team owner is identified by email now instead of a raw user ID —
-// the UI collects "Owner name / Owner email / Owner phone" and expects
-// the account to be matched automatically, or created on the fly if no
-// user with that email exists yet. A newly-created owner gets a random
-// password (never shown/emailed here) and can get in later via the
-// existing forgotPassword/resetPassword flow on their email.
-const findOrCreateOwner = async (ownerEmail, ownerName) => {
+/*
+ * The team owner is identified by email — the UI collects
+ * "Owner name / Owner email / Owner phone" — but the account is now
+ * required to already exist and be active.
+ *
+ * Previously a team could be created for ANY email: if no account existed,
+ * one was silently created with a random password nobody was ever told,
+ * so that owner could never log in normally, and (separately) any small
+ * mismatch between that hidden account and the one the real owner later
+ * registered with caused bidding to fail with a 403. Requiring a real,
+ * already-registered account removes both problems: the email you type
+ * here is always the account that will actually log in and bid.
+ */
+const findOwnerOrExplain = async (ownerEmail) => {
     const email = ownerEmail.trim().toLowerCase();
 
-    let user = await User.findOne({ email }).select("name email role isActive");
-    if (user) {
-        if (!user.isActive) {
-            const err = new Error("Team owner account is inactive");
-            err.statusCode = 409;
-            throw err;
-        }
-        return user;
+    const user = await User.findOne({ email }).select("name email role isActive");
+
+    if (!user) {
+        const err = new Error(
+            `No account is registered with ${email}. Ask the team owner to create an account ` +
+                "at /register first (or register one for them), then create the team using that same email.",
+        );
+        err.statusCode = 404;
+        throw err;
     }
 
-    const randomPassword = crypto.randomBytes(24).toString("hex");
-    user = await User.create({
-        name: ownerName.trim(),
-        email,
-        password: randomPassword,
-        role: "user",
-    });
+    if (!user.isActive) {
+        const err = new Error(`The account for ${email} is deactivated and cannot own a team.`);
+        err.statusCode = 409;
+        throw err;
+    }
+
     return user;
 };
 
@@ -99,7 +105,7 @@ const createTeam = async (req, res) => {
         const auctionDoc = await Auction.findById(auctionId);
         if (!auctionDoc) return res.status(404).json({ success: false, message: "Auction not found" });
 
-        const ownerDoc = await findOrCreateOwner(ownerEmail, ownerName);
+        const ownerDoc = await findOwnerOrExplain(ownerEmail);
 
         // NOTE: this findOne is a best-effort pre-check only. The real
         // guarantee against duplicate team names now comes from the
@@ -194,11 +200,13 @@ const updateTeam = async (req, res) => {
         }
         if (status !== undefined) updateData.status = status;
 
-        // Owner is re-resolved by email the same way createTeam does —
-        // find the matching user, or create one if this is a new email.
+        // Owner is re-resolved by email the same way createTeam does — the
+        // account must already exist (see findOwnerOrExplain above). This is
+        // also how an admin repairs a team whose owner account is wrong: edit
+        // the team and enter the owner's correct, already-registered email.
         if (ownerEmail !== undefined) {
             if (!isValidEmail(ownerEmail)) return res.status(400).json({ success: false, message: "Invalid owner email" });
-            const ownerDoc = await findOrCreateOwner(ownerEmail, ownerName ?? existingTeam.ownerName);
+            const ownerDoc = await findOwnerOrExplain(ownerEmail);
             updateData.owner = ownerDoc._id;
         }
 
