@@ -4,6 +4,20 @@ const asyncHandler = require("../utils/asyncHandler");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryUpload");
 const { validateImageBuffer } = require("../utils/imageValidation");
 
+const parseBidRules = (value) => {
+    if (!value) return [];
+    try {
+        const rules = typeof value === "string" ? JSON.parse(value) : value;
+        if (!Array.isArray(rules)) return [];
+        return rules.map((rule) => ({
+            upTo: rule.upTo === "" || rule.upTo === null || rule.upTo === undefined ? null : Number(rule.upTo),
+            increment: Number(rule.increment),
+        }));
+    } catch {
+        return [];
+    }
+};
+
 // Auction creation
 
 const createAuction = asyncHandler(async (req, res) => {
@@ -28,6 +42,7 @@ const createAuction = asyncHandler(async (req, res) => {
             startingBudget,
             minimumBid,
             bidIncrement,
+            bidRules,
             maxTeams,
             maxPlayersPerTeam,
         } = req.body;
@@ -118,6 +133,7 @@ const createAuction = asyncHandler(async (req, res) => {
             startingBudget,
             minimumBid,
             bidIncrement,
+            bidRules: parseBidRules(bidRules),
             maxTeams,
             maxPlayersPerTeam,
             status: "upcoming",
@@ -239,6 +255,9 @@ const updateAuction = asyncHandler(async (req, res) => {
             auction[field] = req.body[field];
         }
     });
+    if (req.body.bidRules !== undefined) {
+        auction.bidRules = parseBidRules(req.body.bidRules);
+    }
 
     // Image: a new upload replaces it, an explicit removeImage flag clears
     // it, and otherwise (no file, no flag) the existing image is left alone.

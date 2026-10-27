@@ -42,6 +42,21 @@ const auctionSchema = new mongoose.Schema(
             required: [true, "Bid increment is required"],
             min: [1, "Bid increment must be at least 1"],
         },
+        bidRules: {
+            type: [{
+                upTo: { type: Number, default: null, min: 0 },
+                increment: { type: Number, required: true, min: 1 },
+            }],
+            default: [],
+            validate: {
+                validator: (rules) => !rules.length || rules.every((rule, index) =>
+                    Number(rule.increment) > 0 &&
+                    (index === 0 || rules[index - 1].upTo == null ||
+                     rule.upTo == null || Number(rule.upTo) > Number(rules[index - 1].upTo))
+                ),
+                message: "Bid rule thresholds must increase and increments must be positive",
+            },
+        },
 
         maxTeams: {
             type: Number,

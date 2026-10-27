@@ -11,6 +11,8 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 // auctionSocket.js is where this helper really lives.
 const { getAuctionRoom } = require("../socket/auctionSocket");
 const { logTransaction, getAuctionParticipantOwners, notifyUsers } = require("../utils/notify");
+const { getBidIncrement } = require("../utils/bidRules");
+const { getTurnState } = require("../utils/turnBasedBidding");
 
 /*
 |--------------------------------------------------------------------------
@@ -451,6 +453,39 @@ const placeBid = async (
                         session,
                     });
 
+                // Strict round-robin turn order is based on approved registration time.
+                // The server enforces this inside the same transaction as the bid write.
+                const approvedRegistrations = await AuctionRegistration.find({
+                    auction: auctionId,
+                    status: "approved",
+                })
+                    .sort({ registeredAt: 1, createdAt: 1, _id: 1 })
+                    .select("team")
+                    .session(session)
+                    .lean();
+
+                const registrationTeamIds = approvedRegistrations.map((item) => getId(item.team)).filter(Boolean);
+                const activeTeams = await Team.find({
+                    _id: { $in: registrationTeamIds },
+                    status: "active",
+                }).select("_id name").session(session).lean();
+                const activeById = new Map(activeTeams.map((item) => [String(item._id), item]));
+                const orderedTeams = registrationTeamIds
+                    .filter((id) => activeById.has(id))
+                    .map((id) => activeById.get(id));
+
+                if (orderedTeams.length < 2) {
+                    throw new Error("Turn-by-turn bidding requires at least two active, approved teams in this auction.");
+                }
+
+                const turnState = getTurnState(orderedTeams, player.currentBidder ? getId(player.currentBidder) : null);
+                if (String(turnState.nextTeamId) !== String(team._id)) {
+                    const nextName = turnState.nextTeam?.name || "the next approved team";
+                    const error = new Error(`It is not your team's turn. ${nextName} must bid next.`);
+                    error.code = "BID_TURN_NOT_YOURS";
+                    throw error;
+                }
+
                 /*
                  * Current bid.
                  *
@@ -468,11 +503,11 @@ const placeBid = async (
                 /*
                  * Bid increment.
                  */
-                const increment =
-                    Number(
-                        auction.bidIncrement ||
-                        0,
-                    );
+                const increment = getBidIncrement(
+                    currentBid,
+                    auction.bidRules,
+                    auction.bidIncrement,
+                );
 
                 /*
                  * First bid may equal base price.
@@ -636,11 +671,14 @@ const placeBid = async (
                     session,
                 });
 
+                const nextTurn = getTurnState(orderedTeams, String(team._id));
                 result = {
                     bid,
                     auction,
                     player,
                     team,
+                    nextTurnTeam: nextTurn.nextTeam,
+                    turnOrder: nextTurn.turnOrder,
                 };
             },
         );
@@ -694,6 +732,8 @@ const placeBid = async (
                         teamName:
                             result.team.name,
                     },
+                    nextTurnTeam: result.nextTurnTeam,
+                    turnOrder: result.turnOrder,
                 },
             );
         }
@@ -708,6 +748,8 @@ const placeBid = async (
 
             currentBid:
                 result.bid.amount,
+            nextTurnTeam: result.nextTurnTeam,
+            turnOrder: result.turnOrder,
         });
     } catch (error) {
         console.error(
@@ -716,9 +758,9 @@ const placeBid = async (
         );
 
         const status =
-            error.message?.includes(
-                "not approved",
-            )
+            error.code === "BID_TURN_NOT_YOURS"
+                ? 409
+                : error.message?.includes("not approved")
                 ? 403
                 : error.message?.includes(
                     "Insufficient",
@@ -786,21 +828,31 @@ const getCurrentBid = async (
             });
         }
 
+        const approvedRegistrations = await AuctionRegistration.find({
+            auction: auctionId,
+            status: "approved",
+        })
+            .sort({ registeredAt: 1, createdAt: 1, _id: 1 })
+            .select("team")
+            .lean();
+        const registrationTeamIds = approvedRegistrations.map((item) => getId(item.team)).filter(Boolean);
+        const activeTeams = await Team.find({
+            _id: { $in: registrationTeamIds },
+            status: "active",
+        }).select("_id name").lean();
+        const activeById = new Map(activeTeams.map((item) => [String(item._id), item]));
+        const orderedTeams = registrationTeamIds.filter((id) => activeById.has(id)).map((id) => activeById.get(id));
+        const turnState = getTurnState(orderedTeams, player.currentBidder ? getId(player.currentBidder) : null);
+
         return res.status(200).json({
             success: true,
-
             player,
-
-            currentBid:
-                Number(
-                    player.currentBid ||
-                    player.basePrice ||
-                    0,
-                ),
-
-            currentBidder:
-                player.currentBidder ||
-                null,
+            currentBid: Number(player.currentBid || player.basePrice || 0),
+            currentBidder: player.currentBidder || null,
+            nextTurnTeam: turnState.nextTeam,
+            turnOrder: turnState.turnOrder,
+            approvedTeamCount: turnState.approvedTeamCount,
+            canStartBidding: turnState.canStartBidding,
         });
     } catch (error) {
         console.error(

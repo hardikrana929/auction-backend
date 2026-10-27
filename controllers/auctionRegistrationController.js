@@ -2,6 +2,7 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 const Auction = require("../models/Auction");
 const Team = require("../models/Team");
 const withTransaction = require("../utils/withTransaction");
+const { isAuctionAtCapacity, hidePendingWhenFull } = require("../utils/teamCapacity");
 
 // REGISTER TEAM FOR AUCTION
 // POST /api/auction-registration/register
@@ -79,6 +80,19 @@ const registerTeam = async (req, res) => {
                 success: false,
                 message: `Team is already ${registration.status}`,
                 registration,
+            });
+        }
+
+        // Do not accept new/re-submitted applications once the configured
+        // number of approved teams has been reached. The approval endpoint
+        // independently enforces the same limit atomically.
+        if (isAuctionAtCapacity(auction)) {
+            return res.status(409).json({
+                success: false,
+                code: "AUCTION_TEAM_LIMIT_REACHED",
+                message: `This auction is full (${auction.approvedTeamsCount}/${auction.maxTeams} teams approved). No additional team applications can be submitted.`,
+                maxTeams: auction.maxTeams,
+                approvedTeamsCount: auction.approvedTeamsCount,
             });
         }
 
@@ -341,16 +355,20 @@ const getAuctionRegistrations = async (req, res) => {
             filter.status = status;
         }
 
+        // Once full, pending applications are omitted from the admin approval
+        // dashboard and all list queries. They remain stored so they can become
+        // visible again if an approved team later cancels and frees a slot.
+        const effectiveFilter = hidePendingWhenFull(filter, auction);
+
         const pageNumber = Math.max(Number(page), 1);
         const limitNumber = Math.min(Math.max(Number(limit), 1), 100);
 
         const skip = (pageNumber - 1) * limitNumber;
 
         const [registrations, total] = await Promise.all([
-            AuctionRegistration.find(filter)
+            AuctionRegistration.find(effectiveFilter)
                 .populate(
-                    "team",
-                    "name logo ownerName totalBudget remainingBudget status"
+                    { path: "team", select: "name logo ownerName totalBudget remainingBudget status owner", populate: { path: "owner", select: "name email" } }
                 )
                 .populate(
                     "registeredBy",
@@ -368,7 +386,7 @@ const getAuctionRegistrations = async (req, res) => {
                 .skip(skip)
                 .limit(limitNumber),
 
-            AuctionRegistration.countDocuments(filter),
+            AuctionRegistration.countDocuments(effectiveFilter),
         ]);
 
         return res.status(200).json({
@@ -377,6 +395,9 @@ const getAuctionRegistrations = async (req, res) => {
             total,
             page: pageNumber,
             pages: Math.ceil(total / limitNumber),
+            maxTeams: auction.maxTeams,
+            approvedTeamsCount: auction.approvedTeamsCount || 0,
+            isFull: isAuctionAtCapacity(auction),
             registrations,
         });
     } catch (error) {

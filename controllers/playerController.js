@@ -85,6 +85,15 @@ const createPlayer = async (req, res) => {
             });
         }
 
+        const validPersonName = /^[\p{L}][\p{L} .'-]*$/u;
+        if (!validPersonName.test(String(fullName || "").trim()) ||
+            !validPersonName.test(String(lastName || "").trim())) {
+            return res.status(400).json({
+                success: false,
+                message: "First and last name may contain letters, spaces, apostrophes, periods, and hyphens only.",
+            });
+        }
+
         // BASE PRICE
 
         const playerBasePrice =
@@ -97,6 +106,13 @@ const createPlayer = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Base price must be greater than 0",
+            });
+        }
+
+        if (playerBasePrice > Number(auction.startingBudget)) {
+            return res.status(400).json({
+                success: false,
+                message: `Player base price cannot exceed the auction total budget of ${auction.startingBudget}`,
             });
         }
 
@@ -480,6 +496,12 @@ const updatePlayer = async (req, res) => {
                     success: false,
                     message:
                         `Base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
+                });
+            }
+            if (newBasePrice > Number(auction.startingBudget)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Base price cannot exceed the auction total budget of ${auction.startingBudget}`,
                 });
             }
             player.basePrice = newBasePrice;
