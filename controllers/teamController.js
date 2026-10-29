@@ -50,7 +50,7 @@ const getTeamsByAuction = async (req, res) => {
         if (!isValidObjectId(auctionId)) return res.status(400).json({ success: false, message: "Invalid auction ID" });
 
         const teams = await Team.find({ auction: auctionId })
-            .populate("auction", "name date status startingBudget")
+            .populate("auction", "name date status startingBudget teamBudget")
             .populate("owner", "name email")
             .sort({ createdAt: -1 });
 
@@ -67,7 +67,7 @@ const getTeamById = async (req, res) => {
         if (!isValidObjectId(id)) return res.status(400).json({ success: false, message: "Invalid team ID" });
 
         const team = await Team.findById(id)
-            .populate("auction", "name date status startingBudget")
+            .populate("auction", "name date status startingBudget teamBudget")
             .populate("owner", "name email");
         if (!team) return res.status(404).json({ success: false, message: "Team not found" });
 
@@ -129,14 +129,14 @@ const createTeam = async (req, res) => {
             // from the form but not persisted until one of those models
             // adds a phone field. Harmless to receive and drop for now.
             auction: auctionId,
-            totalBudget: auctionDoc.startingBudget,
-            remainingBudget: auctionDoc.startingBudget,
+            totalBudget: Number(auctionDoc.teamBudget ?? auctionDoc.startingBudget),
+            remainingBudget: Number(auctionDoc.teamBudget ?? auctionDoc.startingBudget),
             logo: logo || undefined,
             status: status || "active",
         });
 
         const populatedTeam = await Team.findById(team._id)
-            .populate("auction", "name date status startingBudget")
+            .populate("auction", "name date status startingBudget teamBudget")
             .populate("owner", "name email");
 
         return res.status(201).json({ success: true, message: "Team created successfully", team: populatedTeam });
@@ -230,7 +230,7 @@ const updateTeam = async (req, res) => {
         }
 
         const team = await Team.findByIdAndUpdate(id, updateData, { new: true, runValidators: true })
-            .populate("auction", "name date status startingBudget")
+            .populate("auction", "name date status startingBudget teamBudget")
             .populate("owner", "name email");
         if (!team) return res.status(404).json({ success: false, message: "Team not found" });
 

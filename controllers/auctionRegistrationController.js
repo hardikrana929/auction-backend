@@ -2,7 +2,6 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 const Auction = require("../models/Auction");
 const Team = require("../models/Team");
 const withTransaction = require("../utils/withTransaction");
-const { isAuctionAtCapacity, hidePendingWhenFull } = require("../utils/teamCapacity");
 
 // REGISTER TEAM FOR AUCTION
 // POST /api/auction-registration/register
@@ -83,16 +82,26 @@ const registerTeam = async (req, res) => {
             });
         }
 
-        // Do not accept new/re-submitted applications once the configured
-        // number of approved teams has been reached. The approval endpoint
-        // independently enforces the same limit atomically.
-        if (isAuctionAtCapacity(auction)) {
+        // Use registration records as the source of truth; the cached count can
+        // be stale for auctions created before this counter was introduced.
+        const actualApprovedTeamsCount = await AuctionRegistration.countDocuments({
+            auction: auctionId,
+            status: "approved",
+        });
+
+        if (actualApprovedTeamsCount >= Number(auction.maxTeams)) {
+            if (Number(auction.approvedTeamsCount || 0) !== actualApprovedTeamsCount) {
+                await Auction.updateOne(
+                    { _id: auctionId },
+                    { $set: { approvedTeamsCount: actualApprovedTeamsCount } }
+                );
+            }
             return res.status(409).json({
                 success: false,
                 code: "AUCTION_TEAM_LIMIT_REACHED",
-                message: `This auction is full (${auction.approvedTeamsCount}/${auction.maxTeams} teams approved). No additional team applications can be submitted.`,
+                message: `This auction is full (${actualApprovedTeamsCount}/${auction.maxTeams} teams approved). No additional team applications can be submitted.`,
                 maxTeams: auction.maxTeams,
-                approvedTeamsCount: auction.approvedTeamsCount,
+                approvedTeamsCount: actualApprovedTeamsCount,
             });
         }
 
@@ -167,15 +176,21 @@ const approveRegistration = async (req, res) => {
                 throw err;
             }
 
-            // Atomically claim a team slot: this UPDATE is the actual
-            // check-and-increment, done as one conditional write against
-            // the shared Auction document. If two approvals race, MongoDB's
-            // transaction conflict detection now has something real to
-            // conflict on (both are writing the same document), so the
-            // loser gets a TransientTransactionError and withTransaction
-            // retries it — at which point it correctly re-reads the
-            // updated count and fails the cap check below instead of
-            // silently overcommitting.
+            // Reconcile a potentially stale cached counter against the approved
+            // registration records in this transaction before claiming a slot.
+            const actualApprovedTeamsCount = await AuctionRegistration.countDocuments({
+                auction: auction._id,
+                status: "approved",
+            }).session(session);
+
+            await Auction.updateOne(
+                { _id: auction._id },
+                { $set: { approvedTeamsCount: actualApprovedTeamsCount } },
+                { session }
+            );
+
+            // The conditional write is the atomic capacity check. Concurrent
+            // approvals contend on the same Auction document and retry safely.
             const claimed = await Auction.findOneAndUpdate(
                 {
                     _id: auction._id,
@@ -355,10 +370,19 @@ const getAuctionRegistrations = async (req, res) => {
             filter.status = status;
         }
 
-        // Once full, pending applications are omitted from the admin approval
-        // dashboard and all list queries. They remain stored so they can become
-        // visible again if an approved team later cancels and frees a slot.
-        const effectiveFilter = hidePendingWhenFull(filter, auction);
+        // Always show submitted applications to admins. A full auction blocks
+        // further approvals, but must not hide existing pending applications.
+        const effectiveFilter = filter;
+        const actualApprovedTeamsCount = await AuctionRegistration.countDocuments({
+            auction: auctionId,
+            status: "approved",
+        });
+        if (Number(auction.approvedTeamsCount || 0) !== actualApprovedTeamsCount) {
+            await Auction.updateOne(
+                { _id: auctionId },
+                { $set: { approvedTeamsCount: actualApprovedTeamsCount } }
+            );
+        }
 
         const pageNumber = Math.max(Number(page), 1);
         const limitNumber = Math.min(Math.max(Number(limit), 1), 100);
@@ -396,8 +420,8 @@ const getAuctionRegistrations = async (req, res) => {
             page: pageNumber,
             pages: Math.ceil(total / limitNumber),
             maxTeams: auction.maxTeams,
-            approvedTeamsCount: auction.approvedTeamsCount || 0,
-            isFull: isAuctionAtCapacity(auction),
+            approvedTeamsCount: actualApprovedTeamsCount,
+            isFull: actualApprovedTeamsCount >= Number(auction.maxTeams),
             registrations,
         });
     } catch (error) {

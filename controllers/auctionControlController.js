@@ -516,16 +516,29 @@ const getAuctionSession =
                     );
 
             if (!auctionSession) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Auction session not found",
+                // A session is created when the admin starts the auction.
+                // Before that, this is a valid empty state rather than an API
+                // error, so the admin control screen can render its Start CTA.
+                const auctionExists = await Auction.exists({ _id: auctionId });
+                if (!auctionExists) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Auction not found",
+                    });
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    data: null,
+                    exists: false,
+                    status: "not_started",
                 });
             }
 
             return res.status(200).json({
                 success: true,
                 data: auctionSession,
+                exists: true,
             });
         } catch (error) {
             console.error(

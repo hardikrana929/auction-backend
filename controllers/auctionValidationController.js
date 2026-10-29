@@ -3,6 +3,9 @@ const Team = require("../models/Team");
 const Player = require("../models/Player");
 const AuctionRegistration = require("../models/AuctionRegistration");
 const AuctionSession = require("../models/AuctionSession");
+const Bid = require("../models/Bid");
+const { getBidIncrement } = require("../utils/bidRules");
+const { getExpectedMinimumBid } = require("../utils/expectedBidAmount");
 
 // VALIDATE AUCTION BEFORE START
 // GET /api/auction-validation/start/:auctionId
@@ -297,15 +300,26 @@ const validateBid = async (req, res) => {
             );
         }
 
-        // Calculate minimum valid bid
-        let minimumRequiredBid = player.basePrice;
-
-        if (player.currentBid > 0) {
-            minimumRequiredBid =
-                player.currentBid + auction.bidIncrement;
-        } else if (auction.minimumBid > player.basePrice) {
-            minimumRequiredBid = auction.minimumBid;
-        }
+        // Keep validation consistent with /api/bidding/place. The persisted bid
+        // history, not an initialized/stale Player.currentBid, determines whether
+        // this is the opening bid or a subsequent bid.
+        const latestBid = await Bid.findOne({ auction: auctionId, player: playerId })
+            .sort({ createdAt: -1, _id: -1 })
+            .lean();
+        const effectiveCurrentBid = latestBid
+            ? Number(latestBid.amount)
+            : Number(player.basePrice || auction.minimumBid || 0);
+        const increment = getBidIncrement(
+            effectiveCurrentBid,
+            auction.bidRules,
+            auction.bidIncrement,
+        );
+        const minimumRequiredBid = getExpectedMinimumBid({
+            player: { ...player.toObject(), currentBidder: latestBid?.team || null },
+            auction,
+            currentBid: effectiveCurrentBid,
+            increment,
+        });
 
         // Bid amount
         if (Number(bidAmount) < minimumRequiredBid) {

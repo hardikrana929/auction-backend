@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Auction = require("../models/Auction");
+const AuctionRegistration = require("../models/AuctionRegistration");
 const asyncHandler = require("../utils/asyncHandler");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryUpload");
 const { validateImageBuffer } = require("../utils/imageValidation");
@@ -40,6 +41,7 @@ const createAuction = asyncHandler(async (req, res) => {
             description,
             date,
             startingBudget,
+            teamBudget,
             minimumBid,
             bidIncrement,
             bidRules,
@@ -51,7 +53,7 @@ const createAuction = asyncHandler(async (req, res) => {
         if (
             !name ||
             !date ||
-            startingBudget === undefined ||
+            (teamBudget === undefined && startingBudget === undefined) ||
             minimumBid === undefined ||
             bidIncrement === undefined ||
             maxTeams === undefined ||
@@ -81,12 +83,19 @@ const createAuction = asyncHandler(async (req, res) => {
             });
         }
 
-        // Validate numbers
-        if (startingBudget <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Starting budget must be greater than 0",
-            });
+        // teamBudget is the budget each created team receives. startingBudget
+        // remains as a legacy field so older clients and records still work.
+        const effectiveTeamBudget = Number(teamBudget ?? startingBudget);
+        const effectiveStartingBudget = Number(startingBudget ?? teamBudget);
+        if (!Number.isFinite(effectiveTeamBudget) || effectiveTeamBudget <= 0) {
+            return res.status(400).json({ success: false, message: "Total budget per team must be greater than 0" });
+        }
+        if (!Number.isFinite(effectiveStartingBudget) || effectiveStartingBudget <= 0) {
+            return res.status(400).json({ success: false, message: "Starting budget must be greater than 0" });
+        }
+
+        if (Number(minimumBid) > effectiveTeamBudget) {
+            return res.status(400).json({ success: false, message: "Minimum bid cannot exceed the total budget per team" });
         }
 
         if (minimumBid <= 0) {
@@ -130,9 +139,10 @@ const createAuction = asyncHandler(async (req, res) => {
             description,
             image,
             date: auctionDate,
-            startingBudget,
+            startingBudget: effectiveStartingBudget,
+            teamBudget: effectiveTeamBudget,
             minimumBid,
-            bidIncrement,
+            bidIncrement: Number(bidIncrement || parseBidRules(bidRules)[0]?.increment || 1),
             bidRules: parseBidRules(bidRules),
             maxTeams,
             maxPlayersPerTeam,
@@ -195,6 +205,20 @@ const getAuctionById = asyncHandler(async (req, res) => {
         });
     }
 
+    // Registration records are authoritative. Refresh the cached counter so
+    // an old/stale approvedTeamsCount cannot falsely mark a 10-team auction full.
+    const actualApprovedTeamsCount = await AuctionRegistration.countDocuments({
+        auction: auction._id,
+        status: "approved",
+    });
+    if (Number(auction.approvedTeamsCount || 0) !== actualApprovedTeamsCount) {
+        auction.approvedTeamsCount = actualApprovedTeamsCount;
+        await Auction.updateOne(
+            { _id: auction._id },
+            { $set: { approvedTeamsCount: actualApprovedTeamsCount } }
+        );
+    }
+
     res.status(200).json({
         success: true,
         auction,
@@ -244,6 +268,7 @@ const updateAuction = asyncHandler(async (req, res) => {
         "description",
         "date",
         "startingBudget",
+        "teamBudget",
         "minimumBid",
         "bidIncrement",
         "maxTeams",
@@ -255,6 +280,11 @@ const updateAuction = asyncHandler(async (req, res) => {
             auction[field] = req.body[field];
         }
     });
+    if (req.body.teamBudget !== undefined) {
+        auction.teamBudget = Number(req.body.teamBudget);
+        // Keep older consumers compatible while they migrate to teamBudget.
+        if (req.body.startingBudget === undefined) auction.startingBudget = Number(req.body.teamBudget);
+    }
     if (req.body.bidRules !== undefined) {
         auction.bidRules = parseBidRules(req.body.bidRules);
     }

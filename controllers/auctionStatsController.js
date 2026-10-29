@@ -15,7 +15,7 @@ const getAuctionStats = async (req, res) => {
 
         const auction = await Auction.findById(auctionId)
             .select(
-                "name description image date startingBudget minimumBid bidIncrement maxTeams maxPlayersPerTeam status"
+                "name description image date startingBudget teamBudget minimumBid bidIncrement bidRules maxTeams maxPlayersPerTeam status"
             );
 
         if (!auction) {

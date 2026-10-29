@@ -109,10 +109,10 @@ const createPlayer = async (req, res) => {
             });
         }
 
-        if (playerBasePrice > Number(auction.startingBudget)) {
+        if (playerBasePrice > Number(auction.teamBudget ?? auction.startingBudget)) {
             return res.status(400).json({
                 success: false,
-                message: `Player base price cannot exceed the auction total budget of ${auction.startingBudget}`,
+                message: `Player base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
             });
         }
 
@@ -498,10 +498,10 @@ const updatePlayer = async (req, res) => {
                         `Base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
                 });
             }
-            if (newBasePrice > Number(auction.startingBudget)) {
+            if (newBasePrice > Number(auction.teamBudget ?? auction.startingBudget)) {
                 return res.status(400).json({
                     success: false,
-                    message: `Base price cannot exceed the auction total budget of ${auction.startingBudget}`,
+                    message: `Base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
                 });
             }
             player.basePrice = newBasePrice;

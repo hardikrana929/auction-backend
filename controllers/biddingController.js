@@ -11,8 +11,8 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 // auctionSocket.js is where this helper really lives.
 const { getAuctionRoom } = require("../socket/auctionSocket");
 const { logTransaction, getAuctionParticipantOwners, notifyUsers } = require("../utils/notify");
-const { getBidIncrement } = require("../utils/bidRules");
-const { getTurnState } = require("../utils/turnBasedBidding");
+const { canTeamBidAfterLastBid } = require("../utils/nonSequentialBidding");
+const { computeNextBid } = require("../utils/nextBid");
 
 /*
 |--------------------------------------------------------------------------
@@ -453,13 +453,13 @@ const placeBid = async (
                         session,
                     });
 
-                // Strict round-robin turn order is based on approved registration time.
-                // The server enforces this inside the same transaction as the bid write.
+                // Non-sequential bidding: any approved team may bid, but the team
+                // that placed the latest bid must wait for another team to bid first.
+                // This check runs in the same transaction as the bid write.
                 const approvedRegistrations = await AuctionRegistration.find({
                     auction: auctionId,
                     status: "approved",
                 })
-                    .sort({ registeredAt: 1, createdAt: 1, _id: 1 })
                     .select("team")
                     .session(session)
                     .lean();
@@ -469,85 +469,57 @@ const placeBid = async (
                     _id: { $in: registrationTeamIds },
                     status: "active",
                 }).select("_id name").session(session).lean();
-                const activeById = new Map(activeTeams.map((item) => [String(item._id), item]));
-                const orderedTeams = registrationTeamIds
-                    .filter((id) => activeById.has(id))
-                    .map((id) => activeById.get(id));
+                const activeTeamIds = activeTeams.map((item) => String(item._id));
 
-                if (orderedTeams.length < 2) {
-                    throw new Error("Turn-by-turn bidding requires at least two active, approved teams in this auction.");
+                if (activeTeamIds.length < 2) {
+                    throw new Error("At least two active, approved teams are required for bidding.");
                 }
 
-                const turnState = getTurnState(orderedTeams, player.currentBidder ? getId(player.currentBidder) : null);
-                if (String(turnState.nextTeamId) !== String(team._id)) {
-                    const nextName = turnState.nextTeam?.name || "the next approved team";
-                    const error = new Error(`It is not your team's turn. ${nextName} must bid next.`);
-                    error.code = "BID_TURN_NOT_YOURS";
+                if (!activeTeamIds.includes(String(team._id))) {
+                    throw new Error("Your team must be active and approved for this auction to bid.");
+                }
+
+                // Use persisted bid history as the source of truth. Player.currentBid/currentBidder
+                // can be initialized or stale when the next player starts, which otherwise makes
+                // the backend demand an increment before the first bid.
+                const latestBid = await Bid.findOne({
+                    auction: auctionId,
+                    player: player._id,
+                })
+                    .sort({ createdAt: -1, _id: -1 })
+                    .session(session)
+                    .lean();
+                const latestBidTeamId = latestBid?.team ? getId(latestBid.team) : null;
+
+                if (!canTeamBidAfterLastBid(String(team._id), latestBidTeamId)) {
+                    const error = new Error("Your team placed the latest bid. Wait for another team to bid before bidding again.");
+                    error.code = "BID_CONSECUTIVE_TEAM_NOT_ALLOWED";
                     throw error;
                 }
 
-                /*
-                 * Current bid.
-                 *
-                 * If no current bid exists,
-                 * use base price.
-                 */
-                const currentBid =
-                    Number(
-                        player.currentBid ||
-                        player.basePrice ||
-                        auction.minimumBid ||
-                        0,
-                    );
-
-                /*
-                 * Bid increment.
-                 */
-                const increment = getBidIncrement(
-                    currentBid,
-                    auction.bidRules,
-                    auction.bidIncrement,
-                );
-
-                /*
-                 * First bid may equal base price.
-                 * Every later bid must increase
-                 * by at least the increment.
-                 */
-                const expectedMinimum =
-                    player.currentBid &&
-                        Number(
-                            player.currentBid,
-                        ) > 0
-                        ? currentBid +
-                        increment
-                        : currentBid;
+                // No persisted bid means this is the opening bid, regardless of
+                // pre-populated currentBid/currentBidder fields on the Player document.
+                // computeNextBid is shared with getCurrentBid so the UI and the
+                // validation below can never disagree.
+                const { nextBid: expectedMinimum, increment } = computeNextBid({
+                    player,
+                    auction,
+                    latestBid,
+                });
 
                 if (
                     bidAmount <
                     expectedMinimum
                 ) {
-                    throw new Error(
+                    const minimumBidError = new Error(
                         `Minimum valid bid is ${expectedMinimum}.`,
                     );
+                    minimumBidError.code = "MINIMUM_VALID_BID";
+                    minimumBidError.minimumRequiredBid = expectedMinimum;
+                    minimumBidError.increment = increment;
+                    throw minimumBidError;
                 }
 
-                /*
-                 * Prevent a team from placing
-                 * the same bid repeatedly.
-                 */
-                if (
-                    player.currentBidder &&
-                    getId(
-                        player.currentBidder,
-                    ) ===
-                    String(team._id) &&
-                    bidAmount <= currentBid
-                ) {
-                    throw new Error(
-                        "Your team already holds the highest bid.",
-                    );
-                }
 
                 /*
                  * Budget check.
@@ -671,14 +643,18 @@ const placeBid = async (
                     session,
                 });
 
-                const nextTurn = getTurnState(orderedTeams, String(team._id));
                 result = {
                     bid,
                     auction,
                     player,
                     team,
-                    nextTurnTeam: nextTurn.nextTeam,
-                    turnOrder: nextTurn.turnOrder,
+                    lastBidTeam: { _id: String(team._id), name: team.name },
+                    approvedTeamCount: activeTeamIds.length,
+                    nextBid: computeNextBid({
+                        player,
+                        auction,
+                        latestBid: { amount: bidAmount, team: team._id },
+                    }),
                 };
             },
         );
@@ -732,8 +708,10 @@ const placeBid = async (
                         teamName:
                             result.team.name,
                     },
-                    nextTurnTeam: result.nextTurnTeam,
-                    turnOrder: result.turnOrder,
+                    lastBidTeam: result.lastBidTeam,
+                    approvedTeamCount: result.approvedTeamCount,
+                    nextBid: result.nextBid.nextBid,
+                    increment: result.nextBid.increment,
                 },
             );
         }
@@ -748,8 +726,10 @@ const placeBid = async (
 
             currentBid:
                 result.bid.amount,
-            nextTurnTeam: result.nextTurnTeam,
-            turnOrder: result.turnOrder,
+            lastBidTeam: result.lastBidTeam,
+            approvedTeamCount: result.approvedTeamCount,
+            nextBid: result.nextBid.nextBid,
+            increment: result.nextBid.increment,
         });
     } catch (error) {
         console.error(
@@ -758,18 +738,12 @@ const placeBid = async (
         );
 
         const status =
-            error.code === "BID_TURN_NOT_YOURS"
+            ["BID_TURN_NOT_YOURS", "BID_CONSECUTIVE_TEAM_NOT_ALLOWED"].includes(error.code)
                 ? 409
                 : error.message?.includes("not approved")
-                ? 403
-                : error.message?.includes(
-                    "Insufficient",
-                )
-                    ? 400
-                    : error.message?.includes(
-                        "maximum player",
-                    )
-                        ? 400
+                    ? 403
+                    : error.message?.includes("placed the latest bid")
+                        ? 409
                         : 400;
 
         return res.status(status).json({
@@ -777,6 +751,9 @@ const placeBid = async (
             message:
                 error.message ||
                 "Unable to place bid.",
+            ...(error.code === "MINIMUM_VALID_BID"
+                ? { code: error.code, minimumRequiredBid: error.minimumRequiredBid, nextBid: error.minimumRequiredBid, increment: error.increment }
+                : {}),
         });
     } finally {
         await session.endSession();
@@ -797,6 +774,25 @@ const getCurrentBid = async (
         const {
             auctionId,
         } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(auctionId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid auction ID.",
+            });
+        }
+
+        // Previously `auction` was used below without ever being loaded, which
+        // threw a ReferenceError (HTTP 500) whenever a player was live. That made
+        // the whole live-auction page fail to hydrate lastBidTeam/approvedTeamCount.
+        const auction = await Auction.findById(auctionId);
+
+        if (!auction) {
+            return res.status(404).json({
+                success: false,
+                message: "Auction not found.",
+            });
+        }
 
         const player =
             await Player.findOne({
@@ -828,11 +824,24 @@ const getCurrentBid = async (
             });
         }
 
+        const latestBid = await Bid.findOne({ auction: auctionId, player: player._id })
+            .sort({ createdAt: -1, _id: -1 })
+            .populate("team", "name logo")
+            .lean();
+
+        const next = computeNextBid({ player, auction, latestBid });
+
+        // Normalize stale pre-populated player fields against persisted bid history.
+        const normalizedPlayer = {
+            ...player.toObject(),
+            currentBid: next.currentBid,
+            currentBidder: latestBid?.team || null,
+        };
+
         const approvedRegistrations = await AuctionRegistration.find({
             auction: auctionId,
             status: "approved",
         })
-            .sort({ registeredAt: 1, createdAt: 1, _id: 1 })
             .select("team")
             .lean();
         const registrationTeamIds = approvedRegistrations.map((item) => getId(item.team)).filter(Boolean);
@@ -840,19 +849,18 @@ const getCurrentBid = async (
             _id: { $in: registrationTeamIds },
             status: "active",
         }).select("_id name").lean();
-        const activeById = new Map(activeTeams.map((item) => [String(item._id), item]));
-        const orderedTeams = registrationTeamIds.filter((id) => activeById.has(id)).map((id) => activeById.get(id));
-        const turnState = getTurnState(orderedTeams, player.currentBidder ? getId(player.currentBidder) : null);
 
         return res.status(200).json({
             success: true,
-            player,
-            currentBid: Number(player.currentBid || player.basePrice || 0),
-            currentBidder: player.currentBidder || null,
-            nextTurnTeam: turnState.nextTeam,
-            turnOrder: turnState.turnOrder,
-            approvedTeamCount: turnState.approvedTeamCount,
-            canStartBidding: turnState.canStartBidding,
+            player: normalizedPlayer,
+            currentBid: next.currentBid,
+            currentBidder: latestBid?.team || null,
+            lastBidTeam: latestBid?.team || null,
+            nextBid: next.nextBid,
+            increment: next.increment,
+            approvedTeamCount: activeTeams.length,
+            canStartBidding: activeTeams.length >= 2,
+            biddingMode: "non_sequential",
         });
     } catch (error) {
         console.error(

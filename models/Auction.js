@@ -31,6 +31,13 @@ const auctionSchema = new mongoose.Schema(
             min: [0, "Budget cannot be negative"],
         },
 
+        // Explicit per-team purse. Optional at schema level for compatibility
+        // with auctions created before this field existed; new API requests require it.
+        teamBudget: {
+            type: Number,
+            min: [1, "Team budget must be greater than 0"],
+        },
+
         minimumBid: {
             type: Number,
             required: [true, "Minimum bid is required"],
