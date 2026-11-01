@@ -26,6 +26,15 @@ const initializeSocket = require("./socket/socketServer");
 const app = express();
 const server = http.createServer(app);
 
+// Vercel / Render put a proxy in front of the app. Without this, every visitor
+// looks like the same IP, so the rate limiters (login, forgot-password, OTP)
+// would block ALL users together after only a few requests.
+// Set TRUST_PROXY=0 to turn it off, or a number (hops) to change it.
+const trustProxy = process.env.TRUST_PROXY !== undefined
+    ? Number(process.env.TRUST_PROXY)
+    : (process.env.NODE_ENV === "production" ? 1 : 0);
+app.set("trust proxy", Number.isNaN(trustProxy) ? 1 : trustProxy);
+
 const configuredOrigins = (process.env.CLIENT_URL || "")
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""))
