@@ -15,8 +15,14 @@ const nodemailer = require("nodemailer");
 */
 
 // "AuctionPro <me@gmail.com>" -> { name: "AuctionPro", email: "me@gmail.com" }
+// Also accepts a plain address, and tolerates quotes wrapped around the whole
+// value (Render / Vercel dashboards keep the quotes you type as part of the value).
 const parseSender = (value) => {
-    const text = String(value || "").trim();
+    let text = String(value || "").trim();
+
+    // Remove quotes (straight or curly) around the WHOLE value.
+    text = text.replace(/^["'\u201c\u2018]+|["'\u201d\u2019]+$/g, "").trim();
+
     const match = text.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
 
     if (match) {
@@ -24,6 +30,18 @@ const parseSender = (value) => {
     }
 
     return { name: "AuctionPro", email: text };
+};
+
+const EMAIL_FORMAT = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+// Fail early with a message that says exactly what to fix.
+const assertValidSender = (sender) => {
+    if (!sender.email || !EMAIL_FORMAT.test(sender.email)) {
+        throw new Error(
+            `MAIL_FROM is not a valid sender address (got: ${JSON.stringify(sender.email)}). ` +
+            'Set it to either no-reply@yourdomain.com or AuctionPro <no-reply@yourdomain.com>, without wrapping quotes on Render.',
+        );
+    }
 };
 
 const getMailFrom = () =>
@@ -68,11 +86,7 @@ const createTransporter = () => {
 const sendWithBrevo = async ({ to, toName, subject, text, html }) => {
     const sender = parseSender(getMailFrom());
 
-    if (!sender.email) {
-        throw new Error(
-            "MAIL_FROM is required with BREVO_API_KEY (use an address verified as a sender in Brevo)",
-        );
-    }
+    assertValidSender(sender);
 
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
@@ -104,11 +118,7 @@ const sendWithResend = async ({ to, toName, subject, text, html }) => {
     if (!process.env.RESEND_API_KEY) {
         throw new Error("RESEND_API_KEY is not configured");
     }
-    if (!sender.email) {
-        throw new Error(
-            "MAIL_FROM is required with Resend (use an address on a domain verified in Resend)",
-        );
-    }
+    assertValidSender(sender);
 
     const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
