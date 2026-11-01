@@ -33,6 +33,14 @@ const hint = (error) => {
         return "Login refused. For Gmail use an App Password (Google Account > Security > 2-Step Verification > App passwords), not your normal password. SMTP_USER must be the same Gmail address.";
     }
 
+    if (/Resend API error 401/i.test(text)) {
+        return "Resend rejected the API key. Create or rotate it in Resend > API Keys and update RESEND_API_KEY in Render.";
+    }
+
+    if (/Resend API error 403|domain.*not verified|not authorized/i.test(text)) {
+        return "Resend rejected the sender or recipient. Verify your sending domain in Resend and use a MAIL_FROM address on that verified domain. The onboarding@resend.dev sender is restricted to your own account email for testing.";
+    }
+
     if (/Brevo API error 401/i.test(text)) {
         return "Brevo rejected the API key. Create a new key in Brevo > SMTP & API > API Keys.";
     }
@@ -49,7 +57,7 @@ const hint = (error) => {
     const clientUrl = String(process.env.CLIENT_URL || "").split(",")[0].trim();
 
     console.log("\nAuctionPro e-mail check\n");
-    line("Method:", provider === "brevo" ? "Brevo HTTPS API" : "SMTP");
+    line("Method:", provider === "resend" ? "Resend HTTPS API" : provider === "brevo" ? "Brevo HTTPS API" : "SMTP");
     line("From:", getMailFrom() || "(not set)");
     line("Reset links open:", clientUrl ? `${clientUrl.replace(/\/+$/, "")}/reset-password/<token>` : "(CLIENT_URL not set!)");
 
@@ -57,6 +65,8 @@ const hint = (error) => {
         line("SMTP host / port:", `${process.env.SMTP_HOST || "(not set)"} / ${process.env.SMTP_PORT || "587 (default)"}`);
         line("SMTP user:", process.env.SMTP_USER || "(not set)");
         line("SMTP password:", process.env.SMTP_PASSWORD ? "set" : "(not set)");
+    } else if (provider === "resend") {
+        line("Resend API key:", "set");
     } else {
         line("Brevo API key:", "set");
     }

@@ -7,13 +7,10 @@ const nodemailer = require("nodemailer");
 |
 | Two ways to send, chosen by the environment:
 |
-|   1) BREVO_API_KEY is set  -> Brevo's HTTPS API (port 443).
-|      Use this on hosts that block SMTP, e.g. Render's FREE web services
-|      (outbound SMTP ports 25/465/587 are blocked there).
-|
-|   2) otherwise             -> SMTP with nodemailer (Gmail, etc.).
-|      Needs SMTP_HOST, SMTP_USER, SMTP_PASSWORD. MAIL_FROM is optional and
-|      defaults to "AuctionPro <SMTP_USER>".
+| Provider priority:
+|   1) RESEND_API_KEY -> Resend HTTPS API (port 443), recommended for Render Free.
+|   2) BREVO_API_KEY  -> Brevo HTTPS API (port 443), retained for compatibility.
+|   3) otherwise      -> SMTP with Nodemailer (Gmail, etc.).
 |
 */
 
@@ -33,7 +30,12 @@ const getMailFrom = () =>
     process.env.MAIL_FROM ||
     (process.env.SMTP_USER ? `AuctionPro <${process.env.SMTP_USER}>` : "");
 
-const getProvider = () => (process.env.BREVO_API_KEY ? "brevo" : "smtp");
+// Resend takes priority if both API keys are accidentally present.
+const getProvider = () => {
+    if (process.env.RESEND_API_KEY) return "resend";
+    if (process.env.BREVO_API_KEY) return "brevo";
+    return "smtp";
+};
 
 const createTransporter = () => {
     const port = Number(process.env.SMTP_PORT || 587);
@@ -95,6 +97,48 @@ const sendWithBrevo = async ({ to, toName, subject, text, html }) => {
     }
 };
 
+
+const sendWithResend = async ({ to, toName, subject, text, html }) => {
+    const sender = parseSender(getMailFrom());
+
+    if (!process.env.RESEND_API_KEY) {
+        throw new Error("RESEND_API_KEY is not configured");
+    }
+    if (!sender.email) {
+        throw new Error(
+            "MAIL_FROM is required with Resend (use an address on a domain verified in Resend)",
+        );
+    }
+
+    const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            from: `${sender.name} <${sender.email}>`,
+            to: [toName ? `${toName} <${to}>` : to],
+            subject,
+            html,
+            text,
+        }),
+        signal: AbortSignal.timeout(15000),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const detail = result.message || result.name || JSON.stringify(result);
+        throw new Error(`Resend API error ${response.status}: ${detail}`);
+    }
+
+    console.log("Resend accepted email:", {
+        id: result.id || null,
+        to,
+    });
+    return result;
+};
+
 const sendWithSmtp = async ({ to, subject, text, html }) => {
     const transporter = createTransporter();
 
@@ -107,8 +151,12 @@ const sendWithSmtp = async ({ to, subject, text, html }) => {
     });
 };
 
-const sendMail = async (message) =>
-    getProvider() === "brevo" ? sendWithBrevo(message) : sendWithSmtp(message);
+const sendMail = async (message) => {
+    const provider = getProvider();
+    if (provider === "resend") return sendWithResend(message);
+    if (provider === "brevo") return sendWithBrevo(message);
+    return sendWithSmtp(message);
+};
 
 const sendPasswordResetEmail = async ({ to, name, resetUrl }) => {
     const safeName = String(name || "User").replace(/[<>&"]/g, "");
@@ -165,6 +213,7 @@ module.exports = {
     getMailFrom,
     parseSender,
     sendMail,
+    sendWithResend,
     sendPasswordResetEmail,
     sendPasswordResetOtpEmail,
 };
