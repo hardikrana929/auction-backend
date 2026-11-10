@@ -1,83 +1,95 @@
 const mongoose = require("mongoose");
 
 const auctionSchema = new mongoose.Schema(
-    {
-        name: {
-            type: String,
-            required: [true, "Auction name is required"],
-            trim: true,
-            maxlength: 100,
-        },
+  {
+    name: {
+      type: String,
+      required: [true, "Auction name is required"],
+      trim: true,
+      maxlength: 100,
+    },
 
-        description: {
-            type: String,
-            trim: true,
-            maxlength: 500,
-        },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
 
-        image: {
-            type: String,
-            default: "",
-        },
+    image: { type: String, default: "" },
+    imagePublicId: { type: String, default: "" },
+    accessCode: { type: String, trim: true, uppercase: true, minlength: 8 },
+    assignedUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
 
-        date: {
-            type: Date,
-            required: [true, "Auction date is required"],
-        },
+    date: {
+      type: Date,
+      required: [true, "Auction date is required"],
+    },
 
-        startingBudget: {
-            type: Number,
-            required: [true, "Starting budget is required"],
-            min: [0, "Budget cannot be negative"],
-        },
+    startingBudget: {
+      type: Number,
+      required: [true, "Starting budget is required"],
+      min: [0, "Budget cannot be negative"],
+    },
 
-        // Explicit per-team purse. Optional at schema level for compatibility
-        // with auctions created before this field existed; new API requests require it.
-        teamBudget: {
-            type: Number,
-            min: [1, "Team budget must be greater than 0"],
-        },
+    // Explicit per-team purse. Optional at schema level for compatibility
+    // with auctions created before this field existed; new API requests require it.
+    teamBudget: {
+      type: Number,
+      min: [1, "Team budget must be greater than 0"],
+    },
 
-        minimumBid: {
-            type: Number,
-            required: [true, "Minimum bid is required"],
-            min: [0, "Minimum bid cannot be negative"],
-        },
+    minimumBid: {
+      type: Number,
+      required: [true, "Minimum bid is required"],
+      min: [0, "Minimum bid cannot be negative"],
+    },
 
-        bidIncrement: {
-            type: Number,
-            required: [true, "Bid increment is required"],
-            min: [1, "Bid increment must be at least 1"],
+    bidIncrement: {
+      type: Number,
+      required: [true, "Bid increment is required"],
+      min: [1, "Bid increment must be at least 1"],
+    },
+    bidRules: {
+      type: [
+        {
+          upTo: { type: Number, default: null, min: 0 },
+          increment: { type: Number, required: true, min: 1 },
         },
-        bidRules: {
-            type: [{
-                upTo: { type: Number, default: null, min: 0 },
-                increment: { type: Number, required: true, min: 1 },
-            }],
-            default: [],
-            validate: {
-                validator: (rules) => !rules.length || rules.every((rule, index) =>
-                    Number(rule.increment) > 0 &&
-                    (index === 0 || rules[index - 1].upTo == null ||
-                     rule.upTo == null || Number(rule.upTo) > Number(rules[index - 1].upTo))
-                ),
-                message: "Bid rule thresholds must increase and increments must be positive",
-            },
-        },
+      ],
+      default: [],
+      validate: {
+        validator: (rules) =>
+          !rules.length ||
+          rules.every(
+            (rule, index) =>
+              Number(rule.increment) > 0 &&
+              (index === 0 ||
+                rules[index - 1].upTo == null ||
+                rule.upTo == null ||
+                Number(rule.upTo) > Number(rules[index - 1].upTo)),
+          ),
+        message:
+          "Bid rule thresholds must increase and increments must be positive",
+      },
+    },
 
-        maxTeams: {
-            type: Number,
-            required: [true, "Maximum teams are required"],
-            min: [2, "Auction must have at least 2 teams"],
-        },
+    maxTeams: {
+      type: Number,
+      required: [true, "Maximum teams are required"],
+      min: [2, "Auction must have at least 2 teams"],
+    },
 
-        maxPlayersPerTeam: {
-            type: Number,
-            required: [true, "Maximum players per team are required"],
-            min: [1, "Players per team must be at least 1"],
-        },
+    maxPlayersPerTeam: {
+      type: Number,
+      required: [true, "Maximum players per team are required"],
+      min: [1, "Players per team must be at least 1"],
+    },
 
-        /* Tracks how many teams are currently APPROVED for this auction.
+    /* Tracks how many teams are currently APPROVED for this auction.
          Kept in sync by atomic $inc/$dec operations in
          auctionRegistrationController.js (approve/cancel) rather than
          by counting AuctionRegistration documents at check time, because
@@ -88,27 +100,29 @@ const auctionSchema = new mongoose.Schema(
          Writing this field on the Auction document itself forces real
          document-level contention, which transactions DO protect.*/
 
-        approvedTeamsCount: {
-            type: Number,
-            default: 0,
-            min: 0,
-        },
-
-        status: {
-            type: String,
-            enum: ["draft", "upcoming", "live", "completed", "cancelled"],
-            default: "draft",
-        },
-
-        createdBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User",
-            required: true,
-        },
+    approvedTeamsCount: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
-    {
-        timestamps: true,
-    }
+
+    status: {
+      type: String,
+      enum: ["draft", "upcoming", "live", "completed", "cancelled"],
+      default: "draft",
+    },
+
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+  },
+  {
+    timestamps: true,
+  },
 );
+
+auctionSchema.index({ accessCode: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("Auction", auctionSchema);

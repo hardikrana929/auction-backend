@@ -24,35 +24,38 @@ const mongoose = require("mongoose");
  * controller stays exactly as-is.
  */
 const withTransaction = async (fn, { maxRetries = 3 } = {}) => {
-    let attempt = 0;
+  let attempt = 0;
 
-    while (true) {
-        const session = await mongoose.startSession();
-        try {
-            session.startTransaction();
-            const result = await fn(session);
-            await session.commitTransaction();
-            return result;
-        } catch (error) {
-            await session.abortTransaction().catch(() => { });
+  while (true) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      const result = await fn(session);
+      await session.commitTransaction();
+      return result;
+    } catch (error) {
+      await session.abortTransaction().catch(() => {});
 
-            const isTransient =
-                error?.errorLabels?.includes?.("TransientTransactionError") ||
-                (typeof error?.hasErrorLabel === "function" && error.hasErrorLabel("TransientTransactionError"));
+      const isTransient =
+        error?.errorLabels?.includes?.("TransientTransactionError") ||
+        (typeof error?.hasErrorLabel === "function" &&
+          error.hasErrorLabel("TransientTransactionError"));
 
-            if (isTransient && attempt < maxRetries) {
-                attempt += 1;
-                // Small jittered backoff so a burst of conflicting bids
-                // doesn't immediately collide again on retry.
-                await new Promise((resolve) => setTimeout(resolve, 25 + Math.random() * 50));
-                continue;
-            }
+      if (isTransient && attempt < maxRetries) {
+        attempt += 1;
+        // Small jittered backoff so a burst of conflicting bids
+        // doesn't immediately collide again on retry.
+        await new Promise((resolve) =>
+          setTimeout(resolve, 25 + Math.random() * 50),
+        );
+        continue;
+      }
 
-            throw error;
-        } finally {
-            await session.endSession();
-        }
+      throw error;
+    } finally {
+      await session.endSession();
     }
+  }
 };
 
 module.exports = withTransaction;

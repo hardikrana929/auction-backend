@@ -1,58 +1,36 @@
 const express = require("express");
 
 const {
-    getAuctionHistory,
-    getSoldPlayersHistory,
-    getUnsoldPlayersHistory,
-    getAuctionBidHistory,
-    getPlayerTransactionHistory,
+  getAuctionHistory,
+  getSoldPlayersHistory,
+  getUnsoldPlayersHistory,
+  getAuctionBidHistory,
+  getPlayerTransactionHistory,
 } = require("../controllers/auctionHistoryController");
 
-const {
-    protectRoute,
-} = require("../middleware/authMiddleware");
+const { protectRoute } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+const { requireAuctionViewer } = require("../middleware/auctionScope");
 
 // COMPLETE AUCTION HISTORY
 
-router.get(
-    "/:auctionId",
-    protectRoute,
-    getAuctionHistory
-);
+router.get("/:auctionId", protectRoute, getAuctionHistory);
 
 // SOLD PLAYERS
 
-router.get(
-    "/:auctionId/sold",
-    protectRoute,
-    getSoldPlayersHistory
-);
+router.get("/:auctionId/sold", protectRoute, getSoldPlayersHistory);
 
 // UNSOLD PLAYERS
 
-router.get(
-    "/:auctionId/unsold",
-    protectRoute,
-    getUnsoldPlayersHistory
-);
+router.get("/:auctionId/unsold", protectRoute, getUnsoldPlayersHistory);
 
 // ALL BIDS
 
-router.get(
-    "/:auctionId/bids",
-    protectRoute,
-    getAuctionBidHistory
-);
+router.get("/:auctionId/bids", protectRoute, getAuctionBidHistory);
 
 // PLAYER TRANSACTION HISTORY
 
-router.get(
-    "/player/:playerId",
-    protectRoute,
-    getPlayerTransactionHistory
-);
-
+router.get("/player/:playerId", protectRoute, getPlayerTransactionHistory);
 
 module.exports = router;

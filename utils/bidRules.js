@@ -9,8 +9,9 @@ function getBidIncrement(currentBid, rules, fallbackIncrement = 0) {
   const amount = Number(currentBid);
   const normalizedAmount = Number.isFinite(amount) ? amount : 0;
   const validRules = Array.isArray(rules) ? rules : [];
-  const matched = validRules.find((rule) =>
-    rule && (rule.upTo == null || normalizedAmount < Number(rule.upTo))
+  const matched = validRules.find(
+    (rule) =>
+      rule && (rule.upTo == null || normalizedAmount < Number(rule.upTo)),
   );
   const increment = Number(matched?.increment ?? fallbackIncrement);
   return Number.isFinite(increment) && increment > 0 ? increment : 0;

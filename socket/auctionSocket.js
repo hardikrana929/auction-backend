@@ -8,361 +8,308 @@ const Team = require("../models/Team");
 
 // Auction Room Helpers
 const getAuctionRoom = (auctionId) => {
-    return `auction:${auctionId}`;
+  return `auction:${auctionId}`;
 };
 
 const getTeamRoom = (teamId) => {
-    return `team:${teamId}`;
+  return `team:${teamId}`;
 };
 
 // Validate Auction Access
 const isValidAuctionId = (auctionId) => {
-    return (
-        auctionId &&
-        mongoose.Types.ObjectId.isValid(auctionId)
-    );
+  return typeof auctionId === "string" && /^[a-fA-F0-9]{24}$/.test(auctionId);
 };
 
 // Join Auction Room
 const joinAuction = async (socket, auctionId) => {
-    try {
-        if (!socket.user) {
-            socket.emit("auction:error", { message: "Authentication required" });
-            return;
-        }
-
-        if (!isValidAuctionId(auctionId)) {
-            socket.emit("auction:error", {
-                message: "Invalid auction ID",
-            });
-
-            return;
-        }
-
-        const auction = await Auction.findById(
-            auctionId
-        );
-
-        if (!auction) {
-            socket.emit("auction:error", {
-                message: "Auction not found",
-            });
-
-            return;
-        }
-
-        const isAdmin = socket.user.role === "admin";
-        const isCreator = auction.createdBy?.toString() === socket.user._id.toString();
-        const registration = await AuctionRegistration.findOne({
-            auction: auctionId,
-            registeredBy: socket.user._id,
-            status: "approved",
-        });
-
-        // Participants may enter the live room only after the auction starts.
-        // Admins and the auction creator retain access for control/monitoring.
-        if (!isAdmin && !isCreator) {
-            if (auction.status !== "live") {
-                socket.emit("auction:error", { message: "Auction is not live" });
-                return;
-            }
-
-            if (!registration) {
-                socket.emit("auction:error", { message: "Not authorized to join this auction" });
-                return;
-            }
-        }
-
-        socket.join(getAuctionRoom(auctionId));
-
-        socket.currentAuctionId = auctionId;
-
-        socket.emit("auction:joined", {
-            success: true,
-            auctionId,
-            room: getAuctionRoom(auctionId),
-        });
-
-        console.log(
-            `Socket ${socket.id} joined auction ${auctionId}`
-        );
-    } catch (error) {
-        console.error(
-            "Join Auction Socket Error:",
-            error
-        );
-
-        socket.emit("auction:error", {
-            message: "Unable to join auction",
-        });
+  try {
+    if (!socket.user) {
+      socket.emit("auction:error", { message: "Authentication required" });
+      return;
     }
+
+    if (!isValidAuctionId(auctionId)) {
+      socket.emit("auction:error", {
+        message: "Invalid auction ID",
+      });
+
+      return;
+    }
+
+    const auction = await Auction.findById(auctionId);
+
+    if (!auction) {
+      socket.emit("auction:error", {
+        message: "Auction not found",
+      });
+
+      return;
+    }
+
+    const isAdmin = socket.user.role === "admin";
+    const isManager =
+      socket.user.role === "auction_manager" &&
+      String(auction.assignedUser) === String(socket.user._id) &&
+      String(socket.user.auction) === String(auction._id);
+    const isCreator =
+      auction.createdBy?.toString() === socket.user._id.toString();
+    const ownTeamIds = await Team.distinct("_id", {
+      auction: auctionId,
+      owner: socket.user._id,
+    });
+    const registration = await AuctionRegistration.findOne({
+      auction: auctionId,
+      status: "approved",
+      $or: [{ registeredBy: socket.user._id }, { team: { $in: ownTeamIds } }],
+    });
+
+    // Participants may enter the live room only after the auction starts.
+    // Admins and the auction creator retain access for control/monitoring.
+    if (!isAdmin && !isManager && !isCreator) {
+      if (auction.status !== "live") {
+        socket.emit("auction:error", { message: "Auction is not live" });
+        return;
+      }
+
+      if (!registration) {
+        socket.emit("auction:error", {
+          message: "Not authorized to join this auction",
+        });
+        return;
+      }
+    }
+
+    socket.join(getAuctionRoom(auctionId));
+
+    socket.currentAuctionId = auctionId;
+
+    socket.emit("auction:joined", {
+      success: true,
+      auctionId,
+      room: getAuctionRoom(auctionId),
+    });
+
+    console.log(`Socket ${socket.id} joined auction ${auctionId}`);
+  } catch (error) {
+    console.error("Join Auction Socket Error:", error);
+
+    socket.emit("auction:error", {
+      message: "Unable to join auction",
+    });
+  }
 };
 
 // Leave Auction Room
 const leaveAuction = (socket, auctionId) => {
-    if (!auctionId) {
-        return;
-    }
+  if (!auctionId) {
+    return;
+  }
 
-    socket.leave(getAuctionRoom(auctionId));
+  socket.leave(getAuctionRoom(auctionId));
 
-    if (socket.currentAuctionId === auctionId) {
-        socket.currentAuctionId = null;
-    }
+  if (socket.currentAuctionId === auctionId) {
+    socket.currentAuctionId = null;
+  }
 
-    socket.emit("auction:left", {
-        success: true,
-        auctionId,
-    });
+  socket.emit("auction:left", {
+    success: true,
+    auctionId,
+  });
 
-    console.log(`Socket ${socket.id} left auction ${auctionId}`);
+  console.log(`Socket ${socket.id} left auction ${auctionId}`);
 };
 
 // Join Team Room
 const joinTeam = async (socket, teamId) => {
-    try {
-        if (!socket.user) {
-            socket.emit("team:error", { message: "Authentication required" });
-            return;
-        }
-
-        if (!teamId || !mongoose.Types.ObjectId.isValid(teamId)) {
-            socket.emit("team:error", {
-                message: "Invalid team ID",
-            });
-
-            return;
-        }
-
-        const team = await Team.findById(teamId).select("owner status");
-        if (!team) {
-            socket.emit("team:error", { message: "Team not found" });
-            return;
-        }
-
-        if (
-            socket.user.role !== "admin" &&
-            team.owner.toString() !== socket.user._id.toString()
-        ) {
-            socket.emit("team:error", { message: "Not authorized to join this team" });
-            return;
-        }
-
-        socket.join(getTeamRoom(teamId));
-
-        socket.currentTeamId = teamId;
-
-        socket.emit("team:joined", {
-            success: true,
-            teamId,
-            room: getTeamRoom(teamId),
-        });
-
-        console.log(`Socket ${socket.id} joined team ${teamId}`);
-    } catch (error) {
-        console.error("Join Team Socket Error:", error);
-
-        socket.emit("team:error", {
-            message: "Unable to join team",
-        });
+  try {
+    if (!socket.user) {
+      socket.emit("team:error", { message: "Authentication required" });
+      return;
     }
+
+    if (!teamId || !mongoose.Types.ObjectId.isValid(teamId)) {
+      socket.emit("team:error", {
+        message: "Invalid team ID",
+      });
+
+      return;
+    }
+
+    const team = await Team.findById(teamId).select("owner status");
+    if (!team) {
+      socket.emit("team:error", { message: "Team not found" });
+      return;
+    }
+
+    if (
+      socket.user.role !== "admin" &&
+      team.owner.toString() !== socket.user._id.toString()
+    ) {
+      socket.emit("team:error", {
+        message: "Not authorized to join this team",
+      });
+      return;
+    }
+
+    socket.join(getTeamRoom(teamId));
+
+    socket.currentTeamId = teamId;
+
+    socket.emit("team:joined", {
+      success: true,
+      teamId,
+      room: getTeamRoom(teamId),
+    });
+
+    console.log(`Socket ${socket.id} joined team ${teamId}`);
+  } catch (error) {
+    console.error("Join Team Socket Error:", error);
+
+    socket.emit("team:error", {
+      message: "Unable to join team",
+    });
+  }
 };
 
 // Leave Team Room
 const leaveTeam = (socket, teamId) => {
-    if (!teamId) {
-        return;
-    }
+  if (!teamId) {
+    return;
+  }
 
-    socket.leave(getTeamRoom(teamId));
+  socket.leave(getTeamRoom(teamId));
 
-    if (socket.currentTeamId === teamId) {
-        socket.currentTeamId = null;
-    }
+  if (socket.currentTeamId === teamId) {
+    socket.currentTeamId = null;
+  }
 
-    socket.emit("team:left", {
-        success: true,
-        teamId,
-    });
+  socket.emit("team:left", {
+    success: true,
+    teamId,
+  });
 };
 
 // Register Socket Events
 const registerAuctionSocketEvents = (io, socket) => {
-    // Keep authenticated users in a private notification room so
-    // emitNewNotification() can deliver real-time notifications.
-    if (socket.user?._id) {
-        socket.join(`user:${socket.user._id}`);
-    }
+  // Keep authenticated users in a private notification room so
+  // emitNewNotification() can deliver real-time notifications.
+  if (socket.user?._id) {
+    socket.join(`user:${socket.user._id}`);
+  }
 
-    console.log(`Socket connected: ${socket.id}`);
+  console.log(`Socket connected: ${socket.id}`);
 
-    // Join auction
-    socket.on(
-        "auction:join",
-        async ({ auctionId }) => {
-            await joinAuction(
-                socket,
-                auctionId
-            );
-        }
-    );
+  // Join auction
+  socket.on("auction:join", async (payload) => {
+    await joinAuction(socket, payload?.auctionId);
+  });
 
-    // Leave auction
-    socket.on(
-        "auction:leave",
-        ({ auctionId }) => {
-            leaveAuction(
-                socket,
-                auctionId
-            );
-        }
-    );
+  // Leave auction
+  socket.on("auction:leave", (payload) => {
+    leaveAuction(socket, payload?.auctionId);
+  });
 
-    // Join team
-    socket.on(
-        "team:join",
-        async ({ teamId }) => {
-            await joinTeam(
-                socket,
-                teamId
-            );
-        }
-    );
+  // Join team
+  socket.on("team:join", async (payload) => {
+    await joinTeam(socket, payload?.teamId);
+  });
 
-    // Leave team
-    socket.on(
-        "team:leave",
-        ({ teamId }) => {
-            leaveTeam(
-                socket,
-                teamId
-            );
-        }
-    );
+  // Leave team
+  socket.on("team:leave", (payload) => {
+    leaveTeam(socket, payload?.teamId);
+  });
 
-    // Disconnect
-    socket.on("disconnect", () => {
-        console.log(
-            `Socket disconnected: ${socket.id}`
-        );
-    });
+  // Disconnect
+  socket.on("disconnect", () => {
+    console.log(`Socket disconnected: ${socket.id}`);
+  });
 };
 
 // Broadcast helpers
 
 const emitAuctionStarted = (io, auctionId, data = {}) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "auction:started",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("auction:started", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitAuctionPaused = (io, auctionId, data = {}) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "auction:paused",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("auction:paused", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitAuctionResumed = (io, auctionId, data = {}) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "auction:resumed",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("auction:resumed", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitAuctionCompleted = (io, auctionId, data = {}) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "auction:completed",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("auction:completed", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitPlayerStarted = (io, auctionId, player) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "player:started",
-        {
-            auctionId,
-            player,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("player:started", {
+    auctionId,
+    player,
+  });
 };
 
 const emitNewBid = (io, auctionId, bid) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "bid:new",
-        {
-            auctionId,
-            bid,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("bid:new", {
+    auctionId,
+    bid,
+  });
 };
 
 const emitPlayerSold = (io, auctionId, data) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "player:sold",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("player:sold", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitPlayerUnsold = (io, auctionId, data) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "player:unsold",
-        {
-            auctionId,
-            ...data,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("player:unsold", {
+    auctionId,
+    ...data,
+  });
 };
 
 const emitNextPlayer = (io, auctionId, player) => {
-    io.to(getAuctionRoom(auctionId)).emit(
-        "auction:next-player",
-        {
-            auctionId,
-            player,
-        }
-    );
+  io.to(getAuctionRoom(auctionId)).emit("auction:next-player", {
+    auctionId,
+    player,
+  });
 };
 
 const emitNewNotification = (io, userId, notification) => {
-    io.to(`user:${userId}`).emit(
-        "notification:new",
-        notification
-    );
+  io.to(`user:${userId}`).emit("notification:new", notification);
 };
 
 module.exports = {
-    registerAuctionSocketEvents,
+  registerAuctionSocketEvents,
 
-    getAuctionRoom,
-    getTeamRoom,
+  getAuctionRoom,
+  getTeamRoom,
 
-    emitAuctionStarted,
-    emitAuctionPaused,
-    emitAuctionResumed,
-    emitAuctionCompleted,
+  emitAuctionStarted,
+  emitAuctionPaused,
+  emitAuctionResumed,
+  emitAuctionCompleted,
 
-    emitPlayerStarted,
-    emitNewBid,
-    emitPlayerSold,
-    emitPlayerUnsold,
-    emitNextPlayer,
+  emitPlayerStarted,
+  emitNewBid,
+  emitPlayerSold,
+  emitPlayerUnsold,
+  emitNextPlayer,
 
-    emitNewNotification,
+  emitNewNotification,
 };

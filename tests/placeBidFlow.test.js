@@ -13,13 +13,24 @@ const mongoose = require("mongoose");
 const oid = () => new mongoose.Types.ObjectId();
 
 // ---- fake data store -------------------------------------------------------
-const db = { auction: null, player: null, teams: [], regs: [], bids: [], tx: [] };
+const db = {
+  auction: null,
+  player: null,
+  teams: [],
+  regs: [],
+  bids: [],
+  tx: [],
+  auctionSession: { isPaused: false },
+};
 
 // chainable, awaitable query
 const q = (get) => {
   const api = {
-    session: () => api, select: () => api, lean: () => api,
-    populate: () => api, sort: () => api,
+    session: () => api,
+    select: () => api,
+    lean: () => api,
+    populate: () => api,
+    sort: () => api,
     then: (res, rej) => Promise.resolve().then(get).then(res, rej),
   };
   return api;
@@ -33,23 +44,40 @@ const stub = (relPath, exports) => {
 };
 
 const Auction = { findById: () => q(() => db.auction) };
+const AuctionSession = { findOne: () => q(() => db.auctionSession) };
 const Player = {
   findById: () => q(() => db.player),
-  findOne: () => q(() => (db.player?.status === "auctioning" ? db.player : null)),
+  findOne: () =>
+    q(() => (db.player?.status === "auctioning" ? db.player : null)),
 };
 const Team = {
-  find: (f = {}) => q(() => db.teams.filter((t) =>
-    (!f._id?.$in || f._id.$in.some((id) => same(id, t._id))) &&
-    (!f.status || t.status === f.status) &&
-    (!f.owner || same(f.owner, t.owner)) &&
-    (!f.auction || same(f.auction, t.auction)))),
+  find: (f = {}) =>
+    q(() =>
+      db.teams.filter(
+        (t) =>
+          (!f._id?.$in || f._id.$in.some((id) => same(id, t._id))) &&
+          (!f.status || t.status === f.status) &&
+          (!f.owner || same(f.owner, t.owner)) &&
+          (!f.auction || same(f.auction, t.auction)),
+      ),
+    ),
   findById: (id) => q(() => db.teams.find((t) => same(t._id, id)) || null),
 };
 const AuctionRegistration = {
-  find: (f = {}) => q(() => db.regs.filter((r) =>
-    (!f.status || r.status === f.status) &&
-    (!f.team?.$in || f.team.$in.some((id) => same(id, r.team))))),
-  findOne: (f = {}) => q(() => db.regs.find((r) => r.status === f.status && same(r.team, f.team)) || null),
+  find: (f = {}) =>
+    q(() =>
+      db.regs.filter(
+        (r) =>
+          (!f.status || r.status === f.status) &&
+          (!f.team?.$in || f.team.$in.some((id) => same(id, r.team))),
+      ),
+    ),
+  findOne: (f = {}) =>
+    q(
+      () =>
+        db.regs.find((r) => r.status === f.status && same(r.team, f.team)) ||
+        null,
+    ),
 };
 const Bid = {
   findOne: () => q(() => [...db.bids].reverse()[0] || null),
@@ -61,6 +89,7 @@ const Bid = {
 };
 
 stub("models/Auction.js", Auction);
+stub("models/AuctionSession.js", AuctionSession);
 stub("models/Player.js", Player);
 stub("models/Team.js", Team);
 stub("models/AuctionRegistration.js", AuctionRegistration);
@@ -82,36 +111,76 @@ const { placeBid, getCurrentBid } = require("../controllers/biddingController");
 // ---- helpers ---------------------------------------------------------------
 const makeRes = () => {
   const res = { statusCode: 200, body: null };
-  res.status = (c) => { res.statusCode = c; return res; };
-  res.json = (b) => { res.body = b; return res; };
+  res.status = (c) => {
+    res.statusCode = c;
+    return res;
+  };
+  res.json = (b) => {
+    res.body = b;
+    return res;
+  };
   return res;
 };
 
 const emitted = [];
 const makeReq = (user, body) => ({
-  user, body, params: { auctionId: String(db.auction._id) },
+  user,
+  body,
+  params: { auctionId: String(db.auction._id) },
   app: { get: () => ({ to: () => ({ emit: (...a) => emitted.push(a) }) }) },
 });
 
-function seed({ rules, budgetA = 1_000_000, budgetB = 1_000_000, teams = 2, minimumBid = 10000, basePrice = 10000 } = {}) {
+function seed({
+  rules,
+  budgetA = 1_000_000,
+  budgetB = 1_000_000,
+  teams = 2,
+  minimumBid = 10000,
+  basePrice = 10000,
+} = {}) {
   const auctionId = oid();
   db.auction = {
-    _id: auctionId, status: "live", minimumBid, bidIncrement: 5000,
-    bidRules: rules ?? [{ upTo: 100000, increment: 5000 }, { upTo: null, increment: 10000 }],
+    _id: auctionId,
+    status: "live",
+    minimumBid,
+    bidIncrement: 5000,
+    bidRules: rules ?? [
+      { upTo: 100000, increment: 5000 },
+      { upTo: null, increment: 10000 },
+    ],
     maxPlayersPerTeam: 15,
   };
   db.player = {
-    _id: oid(), auction: auctionId, status: "auctioning", basePrice,
-    currentBid: basePrice, currentBidder: null,
-    toObject() { return { ...this }; }, save: async () => {},
+    _id: oid(),
+    auction: auctionId,
+    status: "auctioning",
+    basePrice,
+    currentBid: basePrice,
+    currentBidder: null,
+    toObject() {
+      return { ...this };
+    },
+    save: async () => {},
   };
   const users = [oid(), oid(), oid()];
   db.teams = users.slice(0, teams).map((u, i) => ({
-    _id: oid(), auction: auctionId, owner: u, name: `Team ${"ABC"[i]}`, status: "active",
-    remainingBudget: i === 0 ? budgetA : budgetB, players: [],
+    _id: oid(),
+    auction: auctionId,
+    owner: u,
+    name: `Team ${"ABC"[i]}`,
+    status: "active",
+    remainingBudget: i === 0 ? budgetA : budgetB,
+    players: [],
   }));
-  db.regs = db.teams.map((t) => ({ auction: auctionId, team: t._id, status: "approved" }));
-  db.bids = []; db.tx = []; emitted.length = 0;
+  db.regs = db.teams.map((t) => ({
+    auction: auctionId,
+    team: t._id,
+    status: "approved",
+  }));
+  db.bids = [];
+  db.tx = [];
+  db.auctionSession = { isPaused: false };
+  emitted.length = 0;
   return {
     A: { user: { _id: users[0], role: "user" }, team: db.teams[0] },
     B: { user: { _id: users[1], role: "user" }, team: db.teams[1] },
@@ -120,10 +189,15 @@ function seed({ rules, budgetA = 1_000_000, budgetB = 1_000_000, teams = 2, mini
 
 const bid = async (who, amount, withTeamId = true) => {
   const res = makeRes();
-  await placeBid(makeReq(who.user, {
-    auctionId: String(db.auction._id), playerId: String(db.player._id),
-    ...(withTeamId ? { teamId: String(who.team._id) } : {}), amount,
-  }), res);
+  await placeBid(
+    makeReq(who.user, {
+      auctionId: String(db.auction._id),
+      playerId: String(db.player._id),
+      ...(withTeamId ? { teamId: String(who.team._id) } : {}),
+      amount,
+    }),
+    res,
+  );
   return res;
 };
 
@@ -195,10 +269,15 @@ test("insufficient budget => 400", async () => {
 test("a user cannot bid for another user's team", async () => {
   const { A, B } = seed();
   const r = makeRes();
-  await placeBid(makeReq(A.user, {
-    auctionId: String(db.auction._id), playerId: String(db.player._id),
-    teamId: String(B.team._id), amount: 10000,
-  }), r);
+  await placeBid(
+    makeReq(A.user, {
+      auctionId: String(db.auction._id),
+      playerId: String(db.player._id),
+      teamId: String(B.team._id),
+      amount: 10000,
+    }),
+    r,
+  );
   assert.equal(r.statusCode, 403);
 });
 
@@ -220,4 +299,12 @@ test("getCurrentBid before any bid reports the opening price", async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.nextBid, 20000);
   assert.equal(res.body.lastBidTeam, null);
+});
+
+test("paused auction rejects a bid with HTTP 409", async () => {
+  const { A } = seed();
+  db.auctionSession = { isPaused: true };
+  const res = await bid(A, 10000);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.message, "Auction is paused");
 });

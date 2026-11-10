@@ -17,7 +17,10 @@ function getTurnState(teams, lastTeamId = null) {
     _id: String(team._id ?? team.id ?? team),
     name: team.name || "Team",
   }));
-  const nextTeamId = getNextTeamId(ordered.map((team) => team._id), lastTeamId);
+  const nextTeamId = getNextTeamId(
+    ordered.map((team) => team._id),
+    lastTeamId,
+  );
   const nextTeam = ordered.find((team) => team._id === nextTeamId) || null;
   return {
     approvedTeamCount: ordered.length,

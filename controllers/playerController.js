@@ -3,697 +3,661 @@ const mongoose = require("mongoose");
 const Player = require("../models/Player");
 const Auction = require("../models/Auction");
 
-const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryUpload");
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} = require("../utils/cloudinaryUpload");
 const { validateImageBuffer } = require("../utils/imageValidation");
 
 // CREATE PLAYER
 const createPlayer = async (req, res) => {
-    try {
-        if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid image file",
-            });
-        }
-
-        const {
-            auctionId,
-            fullName,
-            lastName,
-            contactNo,
-            whatsappNo,
-            villageTown,
-            age,
-            gender,
-            role,
-            battingHand,
-            bowlingStyle,
-            specialization,
-            experience,
-            bio,
-            basePrice,
-            auctionOrder,
-        } = req.body;
-
-        // REQUIRED FIELDS
-
-        if (
-            !auctionId ||
-            !fullName ||
-            !lastName ||
-            !villageTown ||
-            !role
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction, full name, last name, village/town and role are required",
-            });
-        }
-
-        // VALIDATE AUCTION ID
-
-        if (!mongoose.Types.ObjectId.isValid(auctionId)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid auction ID",
-            });
-        }
-
-        // FIND AUCTION
-
-        const auction = await Auction.findById(auctionId);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // CHECK AUCTION STATUS
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed" ||
-            auction.status === "cancelled"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    `Cannot add player to a ${auction.status} auction`,
-            });
-        }
-
-        const validPersonName = /^[\p{L}][\p{L} .'-]*$/u;
-        if (!validPersonName.test(String(fullName || "").trim()) ||
-            !validPersonName.test(String(lastName || "").trim())) {
-            return res.status(400).json({
-                success: false,
-                message: "First and last name may contain letters, spaces, apostrophes, periods, and hyphens only.",
-            });
-        }
-
-        // BASE PRICE
-
-        const playerBasePrice =
-            basePrice !== undefined
-                ? Number(basePrice)
-                : auction.minimumBid;
-
-
-        if (isNaN(playerBasePrice) || playerBasePrice <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Base price must be greater than 0",
-            });
-        }
-
-        if (playerBasePrice > Number(auction.teamBudget ?? auction.startingBudget)) {
-            return res.status(400).json({
-                success: false,
-                message: `Player base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
-            });
-        }
-
-        // Player cannot have base price
-        // below auction minimum bid
-
-        if (playerBasePrice < auction.minimumBid) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    `Player base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
-            });
-        }
-
-        // UPLOAD PHOTO TO CLOUDINARY
-        let photoData = {
-            url: "",
-            publicId: "",
-        };
-
-        if (req.file) {
-            const result = await uploadToCloudinary(
-                req.file.buffer,
-                "auctionpro/players"
-            );
-
-            photoData = {
-                url: result.secure_url,
-                publicId: result.public_id,
-            };
-        }
-
-        // CREATE PLAYER
-
-        const player = await Player.create({
-            auction: auctionId,
-
-            fullName: fullName.trim(),
-            lastName: lastName.trim(),
-
-            photo: photoData,
-
-            contactNo: contactNo || "",
-            whatsappNo: whatsappNo || "",
-
-            villageTown: villageTown.trim(),
-
-            age: age || undefined,
-
-            gender: gender || "Male",
-
-            role,
-
-            battingHand:
-                battingHand || "Right Hand",
-
-            bowlingStyle:
-                bowlingStyle || "Does Not Bowl",
-
-            specialization:
-                Array.isArray(specialization)
-                    ? specialization
-                    : [],
-
-            experience:
-                experience !== undefined
-                    ? Number(experience)
-                    : 0,
-
-            bio: bio || "",
-
-            basePrice: playerBasePrice,
-
-            currentBid: 0,
-
-            status: "available",
-
-            soldTo: null,
-
-            soldPrice: 0,
-
-            auctionOrder:
-                auctionOrder !== undefined
-                    ? Number(auctionOrder)
-                    : 0,
-        });
-
-
-        res.status(201).json({
-            success: true,
-            message: "Player created successfully",
-            player,
-        });
-
-    } catch (error) {
-        console.error("Create Player Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while creating player",
-        });
+  let uploadedPhotoPublicId = null;
+  try {
+    if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid image file",
+      });
     }
+
+    const {
+      auctionId,
+      fullName,
+      lastName,
+      contactNo,
+      whatsappNo,
+      villageTown,
+      age,
+      gender,
+      role,
+      battingHand,
+      bowlingStyle,
+      specialization,
+      experience,
+      bio,
+      basePrice,
+      auctionOrder,
+    } = req.body;
+
+    // REQUIRED FIELDS
+
+    if (!auctionId || !fullName || !lastName || !villageTown || !role) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Auction, full name, last name, village/town and role are required",
+      });
+    }
+
+    // VALIDATE AUCTION ID
+
+    if (!mongoose.Types.ObjectId.isValid(auctionId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid auction ID",
+      });
+    }
+
+    // FIND AUCTION
+
+    const auction = await Auction.findById(auctionId);
+
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found",
+      });
+    }
+
+    // CHECK AUCTION STATUS
+
+    if (
+      auction.status === "live" ||
+      auction.status === "completed" ||
+      auction.status === "cancelled"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot add player to a ${auction.status} auction`,
+      });
+    }
+
+    const validPersonName = /^[\p{L}][\p{L} .'-]*$/u;
+    if (
+      typeof fullName !== "string" ||
+      typeof lastName !== "string" ||
+      !validPersonName.test(fullName.trim()) ||
+      !validPersonName.test(lastName.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "First and last name may contain letters, spaces, apostrophes, periods, and hyphens only.",
+      });
+    }
+
+    // BASE PRICE
+
+    const playerBasePrice =
+      basePrice !== undefined ? Number(basePrice) : auction.minimumBid;
+
+    if (isNaN(playerBasePrice) || playerBasePrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Base price must be greater than 0",
+      });
+    }
+
+    if (
+      playerBasePrice > Number(auction.teamBudget ?? auction.startingBudget)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Player base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
+      });
+    }
+
+    // Player cannot have base price
+    // below auction minimum bid
+
+    if (playerBasePrice < auction.minimumBid) {
+      return res.status(400).json({
+        success: false,
+        message: `Player base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
+      });
+    }
+
+    // UPLOAD PHOTO TO CLOUDINARY
+    let photoData = {
+      url: "",
+      publicId: "",
+    };
+
+    if (req.file) {
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "auctionpro/players",
+      );
+
+      photoData = { url: result.secure_url, publicId: result.public_id };
+      uploadedPhotoPublicId = result.public_id;
+    }
+
+    // CREATE PLAYER
+
+    const player = await Player.create({
+      auction: auctionId,
+
+      fullName: fullName.trim(),
+      lastName: lastName.trim(),
+
+      photo: photoData,
+
+      contactNo: contactNo || "",
+      whatsappNo: whatsappNo || "",
+
+      villageTown: villageTown.trim(),
+
+      age: age || undefined,
+
+      gender: gender || "Male",
+
+      role,
+
+      battingHand: battingHand || "Right Hand",
+
+      bowlingStyle: bowlingStyle || "Does Not Bowl",
+
+      specialization: Array.isArray(specialization) ? specialization : [],
+
+      experience: experience !== undefined ? Number(experience) : 0,
+
+      bio: bio || "",
+
+      basePrice: playerBasePrice,
+
+      currentBid: 0,
+
+      status: "available",
+
+      soldTo: null,
+
+      soldPrice: 0,
+
+      auctionOrder: auctionOrder !== undefined ? Number(auctionOrder) : 0,
+    });
+
+    uploadedPhotoPublicId = null;
+    res
+      .status(201)
+      .json({ success: true, message: "Player created successfully", player });
+  } catch (error) {
+    if (uploadedPhotoPublicId) {
+      try {
+        await deleteFromCloudinary(uploadedPhotoPublicId);
+      } catch (cleanupError) {
+        console.error("Player photo cleanup failed:", cleanupError.message);
+      }
+    }
+    console.error("Create Player Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while creating player",
+    });
+  }
 };
 
 // GET ALL PLAYERS BY AUCTION
 
 const getPlayersByAuction = async (req, res) => {
-    try {
-        const { auctionId } = req.params;
+  try {
+    const { auctionId } = req.params;
 
-        // Validate ID
+    // Validate ID
 
-        if (!mongoose.Types.ObjectId.isValid(auctionId)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid auction ID",
-            });
-        }
-
-        // Check auction
-
-        const auction = await Auction.findById(auctionId);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-
-        const players = await Player.find({
-            auction: auctionId,
-        }).populate("soldTo", "name logo").sort({ auctionOrder: 1, createdAt: 1, });
-
-        res.status(200).json({
-            success: true,
-            count: players.length,
-            players,
-        });
-
-    } catch (error) {
-        console.error("Get Players Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while fetching players",
-        });
+    if (!mongoose.Types.ObjectId.isValid(auctionId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid auction ID",
+      });
     }
+
+    // Check auction
+
+    const auction = await Auction.findById(auctionId);
+
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found",
+      });
+    }
+
+    const players = await Player.find({ auction: auctionId })
+      .populate("soldTo", "name logo")
+      .sort({ auctionOrder: 1, createdAt: 1 });
+    const safePlayers =
+      req.user?.role === "admin" || req.user?.role === "auction_manager"
+        ? players
+        : players.map((item) => {
+            const value = item.toObject();
+            delete value.contactNo;
+            delete value.whatsappNo;
+            return value;
+          });
+    res
+      .status(200)
+      .json({ success: true, count: safePlayers.length, players: safePlayers });
+  } catch (error) {
+    console.error("Get Players Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching players",
+    });
+  }
 };
 
 // GET SINGLE PLAYER
 
 const getPlayerById = async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid player ID",
-            });
-        }
-
-        const player = await Player.findById(id)
-            .populate("auction", "name status minimumBid bidIncrement")
-            .populate("soldTo", "name logo");
-
-        if (!player) {
-            return res.status(404).json({
-                success: false,
-                message: "Player not found",
-            });
-        }
-
-        res.status(200).json({
-            success: true,
-            player,
-        });
-
-    } catch (error) {
-        console.error("Get Player Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while fetching player",
-        });
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid player ID",
+      });
     }
+
+    const player = await Player.findById(id)
+      .populate("auction", "name status minimumBid bidIncrement")
+      .populate("soldTo", "name logo");
+
+    if (!player) {
+      return res.status(404).json({
+        success: false,
+        message: "Player not found",
+      });
+    }
+
+    const safePlayer = player.toObject();
+    if (req.user?.role !== "admin" && req.user?.role !== "auction_manager") {
+      delete safePlayer.contactNo;
+      delete safePlayer.whatsappNo;
+    }
+    res.status(200).json({ success: true, player: safePlayer });
+  } catch (error) {
+    console.error("Get Player Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching player",
+    });
+  }
 };
 
 // UPDATE PLAYER
 const updatePlayer = async (req, res) => {
-    try {
-        if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid image file",
-            });
-        }
-
-        const { id } = req.params;
-
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid player ID",
-            });
-        }
-
-        const player = await Player.findById(id);
-
-        if (!player) {
-            return res.status(404).json({
-                success: false,
-                message: "Player not found",
-            });
-        }
-
-        // GET AUCTION
-
-        const auction = await Auction.findById(
-            player.auction
-        );
-
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // PREVENT UPDATE AFTER AUCTION STARTS
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    `Cannot update player during ${auction.status} auction`,
-            });
-        }
-
-        // PERSONAL INFORMATION
-
-        if (req.body.fullName !== undefined) {
-            if (!req.body.fullName.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Full name cannot be empty",
-                });
-            }
-
-            player.fullName =
-                req.body.fullName.trim();
-        }
-
-        if (req.body.lastName !== undefined) {
-            if (!req.body.lastName.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Last name cannot be empty",
-                });
-            }
-
-            player.lastName =
-                req.body.lastName.trim();
-        }
-
-        if (req.file) {
-            // Delete old photo
-            if (player.photo?.publicId) {
-                try {
-                    await deleteFromCloudinary(
-                        player.photo.publicId
-                    );
-                } catch (deleteError) {
-                    console.error(
-                        "Old player photo delete error:",
-                        deleteError
-                    );
-                }
-            }
-
-            // Upload new photo
-            const result = await uploadToCloudinary(
-                req.file.buffer,
-                "auctionpro/players"
-            );
-
-            player.photo = {
-                url: result.secure_url,
-                publicId: result.public_id,
-            };
-        }
-
-        if (req.body.contactNo !== undefined) {
-            player.contactNo = req.body.contactNo;
-        }
-
-        if (req.body.whatsappNo !== undefined) {
-            player.whatsappNo =
-                req.body.whatsappNo;
-        }
-
-        if (req.body.villageTown !== undefined) {
-            if (!req.body.villageTown.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Village/Town cannot be empty",
-                });
-            }
-
-            player.villageTown =
-                req.body.villageTown.trim();
-        }
-
-        // CRICKET INFORMATION
-
-        if (req.body.age !== undefined) {
-            player.age = req.body.age;
-        }
-
-        if (req.body.gender !== undefined) {
-            player.gender = req.body.gender;
-        }
-
-        if (req.body.role !== undefined) {
-            player.role = req.body.role;
-        }
-
-        if (req.body.battingHand !== undefined) {
-            player.battingHand =
-                req.body.battingHand;
-        }
-
-        if (req.body.bowlingStyle !== undefined) {
-            player.bowlingStyle =
-                req.body.bowlingStyle;
-        }
-
-        if (req.body.specialization !== undefined) {
-            if (!Array.isArray(req.body.specialization)) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Specialization must be an array",
-                });
-            }
-
-            player.specialization =
-                req.body.specialization;
-        }
-
-        if (req.body.experience !== undefined) {
-            player.experience =
-                req.body.experience;
-        }
-
-        if (req.body.bio !== undefined) {
-            player.bio = req.body.bio;
-        }
-
-        // BASE PRICE
-
-        if (req.body.basePrice !== undefined) {
-            const newBasePrice = Number(req.body.basePrice);
-
-            if (isNaN(newBasePrice) || newBasePrice <= 0) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Base price must be greater than 0",
-                });
-            }
-
-            if (newBasePrice < auction.minimumBid) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        `Base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
-                });
-            }
-            if (newBasePrice > Number(auction.teamBudget ?? auction.startingBudget)) {
-                return res.status(400).json({
-                    success: false,
-                    message: `Base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
-                });
-            }
-            player.basePrice = newBasePrice;
-        }
-
-        // AUCTION ORDER
-
-        if (req.body.auctionOrder !== undefined) {
-            player.auctionOrder =
-                req.body.auctionOrder;
-        }
-
-        await player.save();
-
-        res.status(200).json({
-            success: true,
-            message: "Player updated successfully",
-            player,
-        });
-
-    } catch (error) {
-        console.error("Update Player Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while updating player",
-        });
+  let uploadedPhotoPublicId = null;
+  let oldPhotoPublicId = null;
+  try {
+    if (req.file && !validateImageBuffer(req.file.buffer, req.file.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid image file",
+      });
     }
+
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid player ID",
+      });
+    }
+
+    const player = await Player.findById(id);
+
+    if (!player) {
+      return res.status(404).json({
+        success: false,
+        message: "Player not found",
+      });
+    }
+
+    // GET AUCTION
+
+    const auction = await Auction.findById(player.auction);
+
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found",
+      });
+    }
+
+    // PREVENT UPDATE AFTER AUCTION STARTS
+
+    if (auction.status === "live" || auction.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot update player during ${auction.status} auction`,
+      });
+    }
+
+    // PERSONAL INFORMATION
+
+    if (req.body.fullName !== undefined) {
+      if (typeof req.body.fullName !== "string" || !req.body.fullName.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Full name cannot be empty",
+        });
+      }
+
+      player.fullName = req.body.fullName.trim();
+    }
+
+    if (req.body.lastName !== undefined) {
+      if (typeof req.body.lastName !== "string" || !req.body.lastName.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Last name cannot be empty",
+        });
+      }
+
+      player.lastName = req.body.lastName.trim();
+    }
+
+    if (req.file) oldPhotoPublicId = player.photo?.publicId || null;
+
+    if (req.body.contactNo !== undefined) {
+      player.contactNo = req.body.contactNo;
+    }
+
+    if (req.body.whatsappNo !== undefined) {
+      player.whatsappNo = req.body.whatsappNo;
+    }
+
+    if (req.body.villageTown !== undefined) {
+      if (!req.body.villageTown.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Village/Town cannot be empty",
+        });
+      }
+
+      player.villageTown = req.body.villageTown.trim();
+    }
+
+    // CRICKET INFORMATION
+
+    if (req.body.age !== undefined) {
+      player.age = req.body.age;
+    }
+
+    if (req.body.gender !== undefined) {
+      player.gender = req.body.gender;
+    }
+
+    if (req.body.role !== undefined) {
+      player.role = req.body.role;
+    }
+
+    if (req.body.battingHand !== undefined) {
+      player.battingHand = req.body.battingHand;
+    }
+
+    if (req.body.bowlingStyle !== undefined) {
+      player.bowlingStyle = req.body.bowlingStyle;
+    }
+
+    if (req.body.specialization !== undefined) {
+      if (!Array.isArray(req.body.specialization)) {
+        return res.status(400).json({
+          success: false,
+          message: "Specialization must be an array",
+        });
+      }
+
+      player.specialization = req.body.specialization;
+    }
+
+    if (req.body.experience !== undefined) {
+      player.experience = req.body.experience;
+    }
+
+    if (req.body.bio !== undefined) {
+      player.bio = req.body.bio;
+    }
+
+    // BASE PRICE
+
+    if (req.body.basePrice !== undefined) {
+      const newBasePrice = Number(req.body.basePrice);
+
+      if (isNaN(newBasePrice) || newBasePrice <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Base price must be greater than 0",
+        });
+      }
+
+      if (newBasePrice < auction.minimumBid) {
+        return res.status(400).json({
+          success: false,
+          message: `Base price cannot be lower than auction minimum bid of ${auction.minimumBid}`,
+        });
+      }
+      if (newBasePrice > Number(auction.teamBudget ?? auction.startingBudget)) {
+        return res.status(400).json({
+          success: false,
+          message: `Base price cannot exceed the team budget of ${auction.teamBudget ?? auction.startingBudget}`,
+        });
+      }
+      player.basePrice = newBasePrice;
+    }
+
+    // AUCTION ORDER
+
+    if (req.body.auctionOrder !== undefined) {
+      player.auctionOrder = req.body.auctionOrder;
+    }
+
+    if (req.file) {
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        "auctionpro/players",
+      );
+      uploadedPhotoPublicId = result.public_id;
+      player.photo = { url: result.secure_url, publicId: result.public_id };
+    }
+    await player.save();
+    if (oldPhotoPublicId) {
+      try {
+        await deleteFromCloudinary(oldPhotoPublicId);
+      } catch (deleteError) {
+        console.error("Old player photo cleanup failed:", deleteError.message);
+      }
+    }
+    uploadedPhotoPublicId = null;
+
+    res.status(200).json({
+      success: true,
+      message: "Player updated successfully",
+      player,
+    });
+  } catch (error) {
+    if (uploadedPhotoPublicId) {
+      try {
+        await deleteFromCloudinary(uploadedPhotoPublicId);
+      } catch (cleanupError) {
+        console.error("New player photo cleanup failed:", cleanupError.message);
+      }
+    }
+    console.error("Update Player Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while updating player",
+    });
+  }
 };
 
 // UPDATE PLAYER STATUS
 const updatePlayerStatus = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
 
-        // Only transitions that don't require touching a team's
-        // budget/roster are allowed through this endpoint.
-        const allowedStatuses = ["available", "auctioning"];
+    // Only transitions that don't require touching a team's
+    // budget/roster are allowed through this endpoint.
+    const allowedStatuses = ["available", "auctioning"];
 
-        if (!allowedStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid player status. Use the bidding endpoints (/api/bidding/sell, /api/bidding/unsold) to mark a player sold or unsold.",
-            });
-        }
-
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid player ID",
-            });
-        }
-
-        const player = await Player.findById(id);
-
-        if (!player) {
-            return res.status(404).json({
-                success: false,
-                message: "Player not found",
-            });
-        }
-
-        const auction = await Auction.findById(player.auction);
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // A player who has already been sold or marked unsold should
-        // only move again via the bidding flow (e.g. re-auctioning an
-        // unsold player), not via this manual status endpoint.
-        if (player.status === "sold") {
-            return res.status(400).json({
-                success: false,
-                message: "Cannot manually change the status of a sold player",
-            });
-        }
-
-        if (auction.status === "live" || auction.status === "completed") {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot manually change player status during a ${auction.status} auction`,
-            });
-        }
-
-        player.status = status;
-        player.soldTo = null;
-        player.soldPrice = 0;
-        player.currentBid = 0;
-
-        await player.save();
-
-        res.status(200).json({
-            success: true,
-            message: `Player status changed to ${status}`,
-            player,
-        });
-    } catch (error) {
-        console.error("Player Status Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error while updating player status",
-        });
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid player status. Use the bidding endpoints (/api/bidding/sell, /api/bidding/unsold) to mark a player sold or unsold.",
+      });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid player ID",
+      });
+    }
+
+    const player = await Player.findById(id);
+
+    if (!player) {
+      return res.status(404).json({
+        success: false,
+        message: "Player not found",
+      });
+    }
+
+    const auction = await Auction.findById(player.auction);
+
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found",
+      });
+    }
+
+    // A player who has already been sold or marked unsold should
+    // only move again via the bidding flow (e.g. re-auctioning an
+    // unsold player), not via this manual status endpoint.
+    if (player.status === "sold") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot manually change the status of a sold player",
+      });
+    }
+
+    if (auction.status === "live" || auction.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot manually change player status during a ${auction.status} auction`,
+      });
+    }
+
+    player.status = status;
+    player.soldTo = null;
+    player.soldPrice = 0;
+    player.currentBid = 0;
+
+    await player.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Player status changed to ${status}`,
+      player,
+    });
+  } catch (error) {
+    console.error("Player Status Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while updating player status",
+    });
+  }
 };
 
 // DELETE PLAYER
 
 const deletePlayer = async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid player ID",
-            });
-        }
-
-        const player = await Player.findById(id);
-
-        if (!player) {
-            return res.status(404).json({
-                success: false,
-                message: "Player not found",
-            });
-        }
-
-        const auction = await Auction.findById(
-            player.auction
-        );
-
-        if (!auction) {
-            return res.status(404).json({
-                success: false,
-                message: "Auction not found",
-            });
-        }
-
-        // Don't delete after auction starts
-
-        if (
-            auction.status === "live" ||
-            auction.status === "completed"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    `Cannot delete player from a ${auction.status} auction`,
-            });
-        }
-        if (player.photo?.publicId) {
-            try {
-                await deleteFromCloudinary(
-                    player.photo.publicId
-                );
-            } catch (error) {
-                console.error(
-                    "Player photo deletion failed:",
-                    error
-                );
-            }
-        }
-
-        await Player.findByIdAndDelete(id);
-
-        res.status(200).json({
-            success: true,
-            message: "Player deleted successfully",
-        });
-
-    } catch (error) {
-        console.error("Delete Player Error:", error);
-
-        res.status(500).json({
-            success: false,
-            message:
-                "Server error while deleting player",
-        });
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid player ID",
+      });
     }
+
+    const player = await Player.findById(id);
+
+    if (!player) {
+      return res.status(404).json({
+        success: false,
+        message: "Player not found",
+      });
+    }
+
+    const auction = await Auction.findById(player.auction);
+
+    if (!auction) {
+      return res.status(404).json({
+        success: false,
+        message: "Auction not found",
+      });
+    }
+
+    // Don't delete after auction starts
+
+    if (auction.status === "live" || auction.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete player from a ${auction.status} auction`,
+      });
+    }
+    if (player.photo?.publicId) {
+      try {
+        await deleteFromCloudinary(player.photo.publicId);
+      } catch (error) {
+        console.error("Player photo deletion failed:", error);
+      }
+    }
+
+    await Player.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Player deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete Player Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while deleting player",
+    });
+  }
 };
 
 module.exports = {
-    createPlayer,
-    getPlayersByAuction,
-    getPlayerById,
-    updatePlayer,
-    updatePlayerStatus,
-    deletePlayer,
+  createPlayer,
+  getPlayersByAuction,
+  getPlayerById,
+  updatePlayer,
+  updatePlayerStatus,
+  deletePlayer,
 };

@@ -10,7 +10,7 @@ const AuctionRegistration = require("../models/AuctionRegistration");
 // --------------------------------------------------
 
 const getIO = (req) => {
-    return req.app.get("io");
+  return req.app.get("io");
 };
 
 // --------------------------------------------------
@@ -18,1079 +18,840 @@ const getIO = (req) => {
 // --------------------------------------------------
 
 const getAuctionRoom = (auctionId) => {
-    return `auction:${auctionId}`;
+  return `auction:${auctionId}`;
 };
 
 // ==================================================
 // START AUCTION
 // ==================================================
 
-const startAuction = async (
-    req,
-    res
-) => {
-    const session =
-        await mongoose.startSession();
+const startAuction = async (req, res) => {
+  const session = await mongoose.startSession();
 
-    try {
-        const { auctionId } =
-            req.body;
+  try {
+    const { auctionId } = req.body;
 
-        if (!auctionId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction ID is required",
-            });
-        }
-
-        session.startTransaction();
-
-        // ------------------------------------------
-        // Find auction
-        // ------------------------------------------
-
-        const auction =
-            await Auction.findById(
-                auctionId
-            ).session(session);
-
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
-
-        // ------------------------------------------
-        // Validate status
-        // ------------------------------------------
-
-        if (
-            auction.status !==
-            "upcoming" &&
-            auction.status !==
-            "draft"
-        ) {
-            throw new Error(
-                `Auction cannot be started from status: ${auction.status}`
-            );
-        }
-
-        // ------------------------------------------
-        // Count available players
-        // ------------------------------------------
-
-        const totalPlayers =
-            await Player.countDocuments({
-                auction: auctionId,
-            }).session(session);
-
-        if (totalPlayers === 0) {
-            throw new Error(
-                "Cannot start auction without players"
-            );
-        }
-        // ------------------------------------------
-        // Enforce a minimum/maximum approved team count.
-        //
-        // This mirrors the check validateAuctionStart already performs
-        // in auctionValidationController.js — that endpoint is advisory
-        // only (the frontend calls it to show a "ready to start" banner),
-        // so it doesn't actually stop a live auction from starting with
-        // too few teams. This is the enforcement that was missing.
-        // ------------------------------------------
-
-        const approvedTeamsCount = await AuctionRegistration.countDocuments({
-            auction: auctionId,
-            status: "approved",
-        }).session(session);
-
-        if (approvedTeamsCount < 2) {
-            throw new Error(
-                "At least 2 approved teams are required to start the auction"
-            );
-        }
-
-        if (approvedTeamsCount > auction.maxTeams) {
-            throw new Error(
-                `Approved teams (${approvedTeamsCount}) exceed the auction's maximum of ${auction.maxTeams}`
-            );
-        }
-
-        // ------------------------------------------
-        // Update auction
-        // ------------------------------------------
-
-        auction.status = "live";
-
-        await auction.save({
-            session,
-        });
-
-        // ------------------------------------------
-        // Create/update session
-        // ------------------------------------------
-
-        let auctionSession =
-            await AuctionSession.findOne({
-                auction: auctionId,
-            }).session(session);
-
-        if (!auctionSession) {
-            auctionSession =
-                new AuctionSession({
-                    auction: auctionId,
-                });
-        }
-
-        auctionSession.status = "live";
-
-        auctionSession.isPaused = false;
-
-        auctionSession.startedAt = auctionSession.startedAt || new Date();
-
-        auctionSession.totalPlayers = totalPlayers;
-
-        auctionSession.lastAction = "auction_started";
-
-        auctionSession.lastActionAt = new Date();
-
-        auctionSession.controlledBy = req.user._id;
-
-        await auctionSession.save({
-            session,
-        });
-
-        // ------------------------------------------
-        // Commit
-        // ------------------------------------------
-
-        await session.commitTransaction();
-
-        // ------------------------------------------
-        // SOCKET EVENT
-        // ------------------------------------------
-
-        const io = getIO(req);
-
-        if (io) {
-            io.to(
-                getAuctionRoom(auctionId)
-            ).emit(
-                "auction:started",
-                {
-                    auctionId,
-
-                    status: "live",
-
-                    startedAt:
-                        auctionSession.startedAt,
-
-                    totalPlayers,
-
-                    auction: {
-                        _id: auction._id,
-                        name: auction.name,
-                        status: auction.status,
-                    },
-
-                    session: {
-                        status: auctionSession.status,
-                        isPaused:
-                            auctionSession.isPaused,
-                        currentPlayer:
-                            auctionSession.currentPlayer,
-                        currentPlayerIndex:
-                            auctionSession.currentPlayerIndex,
-                    },
-                }
-            );
-        }
-
-        return res.status(200).json({
-            success: true,
-            message:
-                "Auction started successfully",
-            data: {
-                auction,
-                auctionSession,
-            },
-        });
-    } catch (error) {
-        await session.abortTransaction();
-
-        console.error(
-            "Start Auction Error:",
-            error
-        );
-
-        return res.status(400).json({
-            success: false,
-            message: error.message,
-        });
-    } finally {
-        await session.endSession();
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
     }
+
+    session.startTransaction();
+
+    // ------------------------------------------
+    // Find auction
+    // ------------------------------------------
+
+    const auction = await Auction.findById(auctionId).session(session);
+
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
+
+    // ------------------------------------------
+    // Validate status
+    // ------------------------------------------
+
+    if (auction.status !== "upcoming" && auction.status !== "draft") {
+      throw new Error(
+        `Auction cannot be started from status: ${auction.status}`,
+      );
+    }
+
+    // ------------------------------------------
+    // Count available players
+    // ------------------------------------------
+
+    const totalPlayers = await Player.countDocuments({
+      auction: auctionId,
+      status: "available",
+    }).session(session);
+
+    if (totalPlayers === 0) {
+      throw new Error("Cannot start auction without players");
+    }
+    // ------------------------------------------
+    // Enforce a minimum/maximum approved team count.
+    //
+    // This mirrors the check validateAuctionStart already performs
+    // in auctionValidationController.js — that endpoint is advisory
+    // only (the frontend calls it to show a "ready to start" banner),
+    // so it doesn't actually stop a live auction from starting with
+    // too few teams. This is the enforcement that was missing.
+    // ------------------------------------------
+
+    const approvedTeamsCount = await AuctionRegistration.countDocuments({
+      auction: auctionId,
+      status: "approved",
+    }).session(session);
+
+    if (approvedTeamsCount < 2) {
+      throw new Error(
+        "At least 2 approved teams are required to start the auction",
+      );
+    }
+
+    if (approvedTeamsCount > auction.maxTeams) {
+      throw new Error(
+        `Approved teams (${approvedTeamsCount}) exceed the auction's maximum of ${auction.maxTeams}`,
+      );
+    }
+
+    // ------------------------------------------
+    // Update auction
+    // ------------------------------------------
+
+    auction.status = "live";
+
+    await auction.save({
+      session,
+    });
+
+    // ------------------------------------------
+    // Create/update session
+    // ------------------------------------------
+
+    let auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
+
+    if (!auctionSession) {
+      auctionSession = new AuctionSession({
+        auction: auctionId,
+      });
+    }
+
+    auctionSession.status = "live";
+
+    auctionSession.isPaused = false;
+
+    auctionSession.startedAt = auctionSession.startedAt || new Date();
+
+    auctionSession.totalPlayers = totalPlayers;
+
+    auctionSession.lastAction = "auction_started";
+
+    auctionSession.lastActionAt = new Date();
+
+    auctionSession.controlledBy = req.user._id;
+
+    await auctionSession.save({
+      session,
+    });
+
+    // ------------------------------------------
+    // Commit
+    // ------------------------------------------
+
+    await session.commitTransaction();
+
+    // ------------------------------------------
+    // SOCKET EVENT
+    // ------------------------------------------
+
+    const io = getIO(req);
+
+    if (io) {
+      io.to(getAuctionRoom(auctionId)).emit("auction:started", {
+        auctionId,
+
+        status: "live",
+
+        startedAt: auctionSession.startedAt,
+
+        totalPlayers,
+
+        auction: {
+          _id: auction._id,
+          name: auction.name,
+          status: auction.status,
+        },
+
+        session: {
+          status: auctionSession.status,
+          isPaused: auctionSession.isPaused,
+          currentPlayer: auctionSession.currentPlayer,
+          currentPlayerIndex: auctionSession.currentPlayerIndex,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Auction started successfully",
+      data: {
+        auction,
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+
+    console.error("Start Auction Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
 };
 
 // ==================================================
 // PAUSE AUCTION
 // ==================================================
 
-const pauseAuction = async (
-    req,
-    res
-) => {
-    const session =
-        await mongoose.startSession();
+const pauseAuction = async (req, res) => {
+  const session = await mongoose.startSession();
 
-    try {
-        const { auctionId } =
-            req.body;
+  try {
+    const { auctionId } = req.body;
 
-        if (!auctionId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction ID is required",
-            });
-        }
-
-        session.startTransaction();
-
-        const auction =
-            await Auction.findById(
-                auctionId
-            ).session(session);
-
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
-
-        if (
-            auction.status !== "live"
-        ) {
-            throw new Error(
-                "Only live auction can be paused"
-            );
-        }
-
-        const auctionSession =
-            await AuctionSession.findOne({
-                auction: auctionId,
-            }).session(session);
-
-        if (!auctionSession) {
-            throw new Error(
-                "Auction session not found"
-            );
-        }
-
-        if (
-            auctionSession.isPaused
-        ) {
-            throw new Error(
-                "Auction is already paused"
-            );
-        }
-
-        auctionSession.status =
-            "paused";
-
-        auctionSession.isPaused =
-            true;
-
-        auctionSession.pausedAt =
-            new Date();
-
-        auctionSession.lastAction =
-            "auction_paused";
-
-        auctionSession.lastActionAt =
-            new Date();
-
-        await auctionSession.save({
-            session,
-        });
-
-        await session.commitTransaction();
-
-        // ------------------------------------------
-        // SOCKET
-        // ------------------------------------------
-
-        const io = getIO(req);
-
-        if (io) {
-            io.to(
-                getAuctionRoom(auctionId)
-            ).emit(
-                "auction:paused",
-                {
-                    auctionId,
-                    status: "paused",
-                    pausedAt:
-                        auctionSession.pausedAt,
-                }
-            );
-        }
-
-        return res.status(200).json({
-            success: true,
-            message:
-                "Auction paused successfully",
-            data: {
-                auctionSession,
-            },
-        });
-    } catch (error) {
-        await session.abortTransaction();
-
-        console.error(
-            "Pause Auction Error:",
-            error
-        );
-
-        return res.status(400).json({
-            success: false,
-            message: error.message,
-        });
-    } finally {
-        await session.endSession();
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
     }
+
+    session.startTransaction();
+
+    const auction = await Auction.findById(auctionId).session(session);
+
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
+
+    if (auction.status !== "live") {
+      throw new Error("Only live auction can be paused");
+    }
+
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
+
+    if (!auctionSession) {
+      throw new Error("Auction session not found");
+    }
+
+    if (auctionSession.isPaused) {
+      throw new Error("Auction is already paused");
+    }
+
+    auctionSession.status = "paused";
+
+    auctionSession.isPaused = true;
+
+    auctionSession.pausedAt = new Date();
+
+    auctionSession.lastAction = "auction_paused";
+
+    auctionSession.lastActionAt = new Date();
+
+    await auctionSession.save({
+      session,
+    });
+
+    await session.commitTransaction();
+
+    // ------------------------------------------
+    // SOCKET
+    // ------------------------------------------
+
+    const io = getIO(req);
+
+    if (io) {
+      io.to(getAuctionRoom(auctionId)).emit("auction:paused", {
+        auctionId,
+        status: "paused",
+        pausedAt: auctionSession.pausedAt,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Auction paused successfully",
+      data: {
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+
+    console.error("Pause Auction Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
 };
 
 // ==================================================
 // RESUME AUCTION
 // ==================================================
 
-const resumeAuction = async (
-    req,
-    res
-) => {
-    const session =
-        await mongoose.startSession();
+const resumeAuction = async (req, res) => {
+  const session = await mongoose.startSession();
 
-    try {
-        const { auctionId } =
-            req.body;
+  try {
+    const { auctionId } = req.body;
 
-        if (!auctionId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction ID is required",
-            });
-        }
-
-        session.startTransaction();
-
-        const auction =
-            await Auction.findById(
-                auctionId
-            ).session(session);
-
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
-
-        if (
-            auction.status !== "live"
-        ) {
-            throw new Error(
-                "Auction is not live"
-            );
-        }
-
-        const auctionSession =
-            await AuctionSession.findOne({
-                auction: auctionId,
-            }).session(session);
-
-        if (!auctionSession) {
-            throw new Error(
-                "Auction session not found"
-            );
-        }
-
-        if (
-            !auctionSession.isPaused
-        ) {
-            throw new Error(
-                "Auction is not paused"
-            );
-        }
-
-        auctionSession.status =
-            auctionSession.currentPlayer
-                ? "player_auction"
-                : "live";
-
-        auctionSession.isPaused =
-            false;
-
-        auctionSession.resumedAt =
-            new Date();
-
-        auctionSession.lastAction =
-            "auction_resumed";
-
-        auctionSession.lastActionAt =
-            new Date();
-
-        await auctionSession.save({
-            session,
-        });
-
-        await session.commitTransaction();
-
-        // ------------------------------------------
-        // SOCKET
-        // ------------------------------------------
-
-        const io = getIO(req);
-
-        if (io) {
-            io.to(
-                getAuctionRoom(auctionId)
-            ).emit(
-                "auction:resumed",
-                {
-                    auctionId,
-                    status: "live",
-                    resumedAt:
-                        auctionSession.resumedAt,
-                }
-            );
-        }
-
-        return res.status(200).json({
-            success: true,
-            message:
-                "Auction resumed successfully",
-            data: {
-                auctionSession,
-            },
-        });
-    } catch (error) {
-        await session.abortTransaction();
-
-        console.error(
-            "Resume Auction Error:",
-            error
-        );
-
-        return res.status(400).json({
-            success: false,
-            message: error.message,
-        });
-    } finally {
-        await session.endSession();
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
     }
+
+    session.startTransaction();
+
+    const auction = await Auction.findById(auctionId).session(session);
+
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
+
+    if (auction.status !== "live") {
+      throw new Error("Auction is not live");
+    }
+
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
+
+    if (!auctionSession) {
+      throw new Error("Auction session not found");
+    }
+
+    if (!auctionSession.isPaused) {
+      throw new Error("Auction is not paused");
+    }
+
+    const currentPlayer = auctionSession.currentPlayer
+      ? await Player.findById(auctionSession.currentPlayer).session(session)
+      : null;
+    auctionSession.status =
+      currentPlayer?.status === "auctioning" ? "player_auction" : "live";
+
+    auctionSession.isPaused = false;
+
+    auctionSession.resumedAt = new Date();
+
+    auctionSession.lastAction = "auction_resumed";
+
+    auctionSession.lastActionAt = new Date();
+
+    await auctionSession.save({
+      session,
+    });
+
+    await session.commitTransaction();
+
+    // ------------------------------------------
+    // SOCKET
+    // ------------------------------------------
+
+    const io = getIO(req);
+
+    if (io) {
+      io.to(getAuctionRoom(auctionId)).emit("auction:resumed", {
+        auctionId,
+        status: "live",
+        resumedAt: auctionSession.resumedAt,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Auction resumed successfully",
+      data: {
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+
+    console.error("Resume Auction Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
 };
 
 // ==================================================
 // GET AUCTION SESSION
 // ==================================================
 
-const getAuctionSession =
-    async (req, res) => {
-        try {
-            const { auctionId } =
-                req.params;
+const getAuctionSession = async (req, res) => {
+  try {
+    const { auctionId } = req.params;
 
-            const auctionSession =
-                await AuctionSession.findOne({
-                    auction: auctionId,
-                })
-                    .populate(
-                        "currentPlayer"
-                    )
-                    .populate(
-                        "controlledBy",
-                        "name email role"
-                    );
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    })
+      .populate("currentPlayer")
+      .populate("controlledBy", "name role");
 
-            if (!auctionSession) {
-                // A session is created when the admin starts the auction.
-                // Before that, this is a valid empty state rather than an API
-                // error, so the admin control screen can render its Start CTA.
-                const auctionExists = await Auction.exists({ _id: auctionId });
-                if (!auctionExists) {
-                    return res.status(404).json({
-                        success: false,
-                        message: "Auction not found",
-                    });
-                }
+    if (!auctionSession) {
+      // A session is created when the admin starts the auction.
+      // Before that, this is a valid empty state rather than an API
+      // error, so the admin control screen can render its Start CTA.
+      const auctionExists = await Auction.exists({ _id: auctionId });
+      if (!auctionExists) {
+        return res.status(404).json({
+          success: false,
+          message: "Auction not found",
+        });
+      }
 
-                return res.status(200).json({
-                    success: true,
-                    data: null,
-                    exists: false,
-                    status: "not_started",
-                });
-            }
+      return res.status(200).json({
+        success: true,
+        data: null,
+        exists: false,
+        status: "not_started",
+      });
+    }
 
-            return res.status(200).json({
-                success: true,
-                data: auctionSession,
-                exists: true,
-            });
-        } catch (error) {
-            console.error(
-                "Get Auction Session Error:",
-                error
-            );
+    return res.status(200).json({
+      success: true,
+      data: auctionSession,
+      exists: true,
+    });
+  } catch (error) {
+    console.error("Get Auction Session Error:", error);
 
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Server error",
-            });
-        }
-    };
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
 
 // ==================================================
 // START NEXT PLAYER
 // ==================================================
 
-const startNextPlayer = async (
-    req,
-    res
-) => {
-    const session =
-        await mongoose.startSession();
+const startNextPlayer = async (req, res) => {
+  const session = await mongoose.startSession();
 
-    try {
-        const { auctionId } =
-            req.body;
+  try {
+    const { auctionId } = req.body;
 
-        if (!auctionId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction ID is required",
-            });
-        }
-
-        session.startTransaction();
-
-        const auction =
-            await Auction.findById(
-                auctionId
-            ).session(session);
-
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
-
-        if (
-            auction.status !== "live"
-        ) {
-            throw new Error(
-                "Auction is not live"
-            );
-        }
-
-        const auctionSession =
-            await AuctionSession.findOne({
-                auction: auctionId,
-            }).session(session);
-
-        if (!auctionSession) {
-            throw new Error(
-                "Auction session not found"
-            );
-        }
-
-        if (
-            auctionSession.isPaused
-        ) {
-            throw new Error(
-                "Auction is paused"
-            );
-        }
-
-        // ------------------------------------------
-        // Make sure no player is currently auctioning
-        // ------------------------------------------
-
-        const currentAuctioningPlayer =
-            await Player.findOne({
-                auction: auctionId,
-                status: "auctioning",
-            }).session(session);
-
-        if (currentAuctioningPlayer) {
-            throw new Error(
-                "Current player must be completed before starting next player"
-            );
-        }
-
-        // ------------------------------------------
-        // Find next available player
-        // ------------------------------------------
-
-        // A player leaves "available" as soon as they are sold/unsold, so the
-        // lowest remaining auctionOrder is always the next one. The old
-        // "auctionOrder > currentPlayerIndex" filter skipped every player who had
-        // the default order 0 (or the same order as the previous player), which
-        // produced "No more players available" after the very first player.
-        const nextPlayer =
-            await Player.findOne({
-                auction: auctionId,
-                status: "available",
-            })
-                .sort({
-                    auctionOrder: 1,
-                    createdAt: 1,
-                })
-                .session(session);
-
-        if (!nextPlayer) {
-            throw new Error(
-                "No more players available"
-            );
-        }
-
-        // ------------------------------------------
-        // Start player
-        // ------------------------------------------
-
-        nextPlayer.status =
-            "auctioning";
-
-        nextPlayer.currentBid =
-            nextPlayer.basePrice;
-
-        nextPlayer.currentBidder =
-            null;
-
-        nextPlayer.soldTo =
-            null;
-
-        nextPlayer.soldPrice =
-            0;
-
-        await nextPlayer.save({
-            session,
-        });
-
-        // ------------------------------------------
-        // Update session
-        // ------------------------------------------
-
-        auctionSession.currentPlayer =
-            nextPlayer._id;
-
-        auctionSession.currentPlayerIndex =
-            nextPlayer.auctionOrder;
-
-        auctionSession.status =
-            "player_auction";
-
-        auctionSession.lastAction =
-            "next_player";
-
-        auctionSession.lastActionAt =
-            new Date();
-
-        await auctionSession.save({
-            session,
-        });
-
-        await session.commitTransaction();
-
-        // ------------------------------------------
-        // SOCKET
-        // ------------------------------------------
-
-        const io = getIO(req);
-
-        if (io) {
-            io.to(
-                getAuctionRoom(auctionId)
-            ).emit(
-                "auction:next-player",
-                {
-                    auctionId,
-
-                    status: "player_auction",
-
-                    player: {
-                        id: nextPlayer._id,
-                        _id: nextPlayer._id,
-
-                        fullName:
-                            nextPlayer.fullName,
-
-                        lastName:
-                            nextPlayer.lastName,
-
-                        photo:
-                            nextPlayer.photo,
-
-                        role:
-                            nextPlayer.role,
-
-                        battingHand:
-                            nextPlayer.battingHand,
-
-                        bowlingStyle:
-                            nextPlayer.bowlingStyle,
-
-                        basePrice:
-                            nextPlayer.basePrice,
-
-                        currentBid:
-                            nextPlayer.currentBid,
-
-                        currentBidder: null,
-
-                        status:
-                            nextPlayer.status,
-                    },
-
-                    auctionSession: {
-                        currentPlayer:
-                            nextPlayer._id,
-
-                        currentPlayerIndex:
-                            nextPlayer.auctionOrder,
-
-                        status: "player_auction",
-
-                        isPaused: false,
-                    },
-                }
-            );
-        }
-
-        return res.status(200).json({
-            success: true,
-            message:
-                "Next player started successfully",
-            data: {
-                player:
-                    nextPlayer,
-                auctionSession,
-            },
-        });
-    } catch (error) {
-        await session.abortTransaction();
-
-        console.error(
-            "Start Next Player Error:",
-            error
-        );
-
-        return res.status(400).json({
-            success: false,
-            message: error.message,
-        });
-    } finally {
-        await session.endSession();
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
     }
+
+    session.startTransaction();
+
+    const auction = await Auction.findById(auctionId).session(session);
+
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
+
+    if (auction.status !== "live") {
+      throw new Error("Auction is not live");
+    }
+
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
+
+    if (!auctionSession) {
+      throw new Error("Auction session not found");
+    }
+
+    if (auctionSession.isPaused) {
+      throw new Error("Auction is paused");
+    }
+
+    // ------------------------------------------
+    // Make sure no player is currently auctioning
+    // ------------------------------------------
+
+    const currentAuctioningPlayer = await Player.findOne({
+      auction: auctionId,
+      status: "auctioning",
+    }).session(session);
+
+    if (currentAuctioningPlayer) {
+      throw new Error(
+        "Current player must be completed before starting next player",
+      );
+    }
+
+    // ------------------------------------------
+    // Find next available player
+    // ------------------------------------------
+
+    // A player leaves "available" as soon as they are sold/unsold, so the
+    // lowest remaining auctionOrder is always the next one. The old
+    // "auctionOrder > currentPlayerIndex" filter skipped every player who had
+    // the default order 0 (or the same order as the previous player), which
+    // produced "No more players available" after the very first player.
+    const nextPlayer = await Player.findOne({
+      auction: auctionId,
+      status: "available",
+    })
+      .sort({
+        auctionOrder: 1,
+        createdAt: 1,
+      })
+      .session(session);
+
+    if (!nextPlayer) {
+      throw new Error("No more players available");
+    }
+
+    // ------------------------------------------
+    // Start player
+    // ------------------------------------------
+
+    nextPlayer.status = "auctioning";
+
+    nextPlayer.currentBid = nextPlayer.basePrice;
+
+    nextPlayer.currentBidder = null;
+
+    nextPlayer.soldTo = null;
+
+    nextPlayer.soldPrice = 0;
+
+    await nextPlayer.save({
+      session,
+    });
+
+    // ------------------------------------------
+    // Update session
+    // ------------------------------------------
+
+    auctionSession.currentPlayer = nextPlayer._id;
+
+    auctionSession.currentPlayerIndex = nextPlayer.auctionOrder;
+
+    auctionSession.status = "player_auction";
+
+    auctionSession.lastAction = "next_player";
+
+    auctionSession.lastActionAt = new Date();
+
+    await auctionSession.save({
+      session,
+    });
+
+    await session.commitTransaction();
+
+    // ------------------------------------------
+    // SOCKET
+    // ------------------------------------------
+
+    const io = getIO(req);
+
+    if (io) {
+      io.to(getAuctionRoom(auctionId)).emit("auction:next-player", {
+        auctionId,
+
+        status: "player_auction",
+
+        player: {
+          id: nextPlayer._id,
+          _id: nextPlayer._id,
+
+          fullName: nextPlayer.fullName,
+
+          lastName: nextPlayer.lastName,
+
+          photo: nextPlayer.photo,
+
+          role: nextPlayer.role,
+
+          battingHand: nextPlayer.battingHand,
+
+          bowlingStyle: nextPlayer.bowlingStyle,
+
+          basePrice: nextPlayer.basePrice,
+
+          currentBid: nextPlayer.currentBid,
+
+          currentBidder: null,
+
+          status: nextPlayer.status,
+        },
+
+        auctionSession: {
+          currentPlayer: nextPlayer._id,
+
+          currentPlayerIndex: nextPlayer.auctionOrder,
+
+          status: "player_auction",
+
+          isPaused: false,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Next player started successfully",
+      data: {
+        player: nextPlayer,
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+
+    console.error("Start Next Player Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
 };
 
 // ==================================================
 // COMPLETE CURRENT PLAYER
 // ==================================================
 
-const completeCurrentPlayer =
-    async (req, res) => {
-        const session =
-            await mongoose.startSession();
+const completeCurrentPlayer = async (req, res) => {
+  const session = await mongoose.startSession();
 
-        try {
-            const { auctionId } =
-                req.body;
+  try {
+    const { auctionId } = req.body;
 
-            if (!auctionId) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Auction ID is required",
-                });
-            }
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
+    }
 
-            session.startTransaction();
+    session.startTransaction();
 
-            const auction =
-                await Auction.findById(
-                    auctionId
-                ).session(session);
+    const auction = await Auction.findById(auctionId).session(session);
 
-            if (!auction) {
-                throw new Error(
-                    "Auction not found"
-                );
-            }
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
 
-            const auctionSession =
-                await AuctionSession.findOne({
-                    auction: auctionId,
-                }).session(session);
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
 
-            if (!auctionSession) {
-                throw new Error(
-                    "Auction session not found"
-                );
-            }
+    if (!auctionSession) {
+      throw new Error("Auction session not found");
+    }
 
-            if (
-                !auctionSession.currentPlayer
-            ) {
-                throw new Error(
-                    "No current player"
-                );
-            }
+    if (!auctionSession.currentPlayer) {
+      throw new Error("No current player");
+    }
 
-            const player =
-                await Player.findById(
-                    auctionSession.currentPlayer
-                ).session(session);
+    const player = await Player.findById(auctionSession.currentPlayer).session(
+      session,
+    );
 
-            if (!player) {
-                throw new Error(
-                    "Current player not found"
-                );
-            }
+    if (!player) {
+      throw new Error("Current player not found");
+    }
 
-            // ------------------------------------------------
-            // IMPORTANT:
-            // SOLD / UNSOLD should normally be handled by
-            // biddingController.js.
-            //
-            // This controller only synchronizes the session
-            // after the player has already been processed.
-            // ------------------------------------------------
+    // ------------------------------------------------
+    // IMPORTANT:
+    // SOLD / UNSOLD should normally be handled by
+    // biddingController.js.
+    //
+    // This controller only synchronizes the session
+    // after the player has already been processed.
+    // ------------------------------------------------
 
-            if (
-                player.status ===
-                "auctioning"
-            ) {
-                throw new Error(
-                    "Player must be sold or marked unsold before completing"
-                );
-            }
+    if (player.status === "auctioning") {
+      throw new Error("Player must be sold or marked unsold before completing");
+    }
 
-            auctionSession.lastAction =
-                "next_player";
+    auctionSession.lastAction = "next_player";
 
-            auctionSession.lastActionAt =
-                new Date();
+    auctionSession.lastActionAt = new Date();
 
-            await auctionSession.save({
-                session,
-            });
+    await auctionSession.save({
+      session,
+    });
 
-            await session.commitTransaction();
+    await session.commitTransaction();
 
-            return res.status(200).json({
-                success: true,
-                message:
-                    "Current player completed successfully",
-                data: {
-                    player,
-                    auctionSession,
-                },
-            });
-        } catch (error) {
-            await session.abortTransaction();
+    return res.status(200).json({
+      success: true,
+      message: "Current player completed successfully",
+      data: {
+        player,
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
 
-            console.error(
-                "Complete Current Player Error:",
-                error
-            );
+    console.error("Complete Current Player Error:", error);
 
-            return res.status(400).json({
-                success: false,
-                message: error.message,
-            });
-        } finally {
-            await session.endSession();
-        }
-    };
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
+};
 
 // ==================================================
 // COMPLETE AUCTION
 // ==================================================
 
-const completeAuction = async (
-    req,
-    res
-) => {
-    const session =
-        await mongoose.startSession();
+const completeAuction = async (req, res) => {
+  const session = await mongoose.startSession();
 
-    try {
-        const { auctionId } =
-            req.body;
+  try {
+    const { auctionId } = req.body;
 
-        if (!auctionId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Auction ID is required",
-            });
-        }
-
-        session.startTransaction();
-
-        const auction =
-            await Auction.findById(
-                auctionId
-            ).session(session);
-
-        if (!auction) {
-            throw new Error(
-                "Auction not found"
-            );
-        }
-
-        if (
-            auction.status !== "live"
-        ) {
-            throw new Error(
-                "Only live auction can be completed"
-            );
-        }
-
-        // ------------------------------------------
-        // Make sure no player is being auctioned
-        // ------------------------------------------
-
-        const auctioningPlayer =
-            await Player.findOne({
-                auction: auctionId,
-                status: "auctioning",
-            }).session(session);
-
-        if (auctioningPlayer) {
-            throw new Error(
-                "Current player must be completed before closing auction"
-            );
-        }
-
-        // ------------------------------------------
-        // Make sure no available players remain
-        // ------------------------------------------
-
-        const remainingPlayers =
-            await Player.countDocuments({
-                auction: auctionId,
-                status: "available",
-            }).session(session);
-
-        if (remainingPlayers > 0) {
-            throw new Error(
-                `${remainingPlayers} player(s) still remain in the auction`
-            );
-        }
-
-        // ------------------------------------------
-        // Update auction
-        // ------------------------------------------
-
-        auction.status =
-            "completed";
-
-        await auction.save({
-            session,
-        });
-
-        // ------------------------------------------
-        // Update session
-        // ------------------------------------------
-
-        const auctionSession =
-            await AuctionSession.findOne({
-                auction: auctionId,
-            }).session(session);
-
-        if (auctionSession) {
-            auctionSession.status =
-                "completed";
-
-            auctionSession.isPaused =
-                false;
-
-            auctionSession.completedAt =
-                new Date();
-
-            auctionSession.lastAction =
-                "auction_completed";
-
-            auctionSession.lastActionAt =
-                new Date();
-
-            await auctionSession.save({
-                session,
-            });
-        }
-
-        await session.commitTransaction();
-
-        // ------------------------------------------
-        // SOCKET
-        // ------------------------------------------
-
-        const io = getIO(req);
-
-        if (io) {
-            io.to(
-                getAuctionRoom(auctionId)
-            ).emit(
-                "auction:completed",
-                {
-                    auctionId,
-                    status:
-                        "completed",
-                    completedAt:
-                        new Date(),
-                }
-            );
-        }
-
-        return res.status(200).json({
-            success: true,
-            message:
-                "Auction completed successfully",
-            data: {
-                auction,
-                auctionSession,
-            },
-        });
-    } catch (error) {
-        await session.abortTransaction();
-
-        console.error(
-            "Complete Auction Error:",
-            error
-        );
-
-        return res.status(400).json({
-            success: false,
-            message: error.message,
-        });
-    } finally {
-        await session.endSession();
+    if (!auctionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Auction ID is required",
+      });
     }
+
+    session.startTransaction();
+
+    const auction = await Auction.findById(auctionId).session(session);
+
+    if (!auction) {
+      throw new Error("Auction not found");
+    }
+
+    if (auction.status !== "live") {
+      throw new Error("Only live auction can be completed");
+    }
+
+    // ------------------------------------------
+    // Make sure no player is being auctioned
+    // ------------------------------------------
+
+    const auctioningPlayer = await Player.findOne({
+      auction: auctionId,
+      status: "auctioning",
+    }).session(session);
+
+    if (auctioningPlayer) {
+      throw new Error(
+        "Current player must be completed before closing auction",
+      );
+    }
+
+    // ------------------------------------------
+    // Make sure no available players remain
+    // ------------------------------------------
+
+    const remainingPlayers = await Player.countDocuments({
+      auction: auctionId,
+      status: "available",
+    }).session(session);
+
+    if (remainingPlayers > 0) {
+      throw new Error(
+        `${remainingPlayers} player(s) still remain in the auction`,
+      );
+    }
+
+    // ------------------------------------------
+    // Update auction
+    // ------------------------------------------
+
+    auction.status = "completed";
+
+    await auction.save({
+      session,
+    });
+
+    // ------------------------------------------
+    // Update session
+    // ------------------------------------------
+
+    const auctionSession = await AuctionSession.findOne({
+      auction: auctionId,
+    }).session(session);
+
+    if (auctionSession) {
+      auctionSession.status = "completed";
+
+      auctionSession.isPaused = false;
+
+      auctionSession.completedAt = new Date();
+
+      auctionSession.lastAction = "auction_completed";
+
+      auctionSession.lastActionAt = new Date();
+
+      await auctionSession.save({
+        session,
+      });
+    }
+
+    await session.commitTransaction();
+
+    // ------------------------------------------
+    // SOCKET
+    // ------------------------------------------
+
+    const io = getIO(req);
+
+    if (io) {
+      io.to(getAuctionRoom(auctionId)).emit("auction:completed", {
+        auctionId,
+        status: "completed",
+        completedAt: new Date(),
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Auction completed successfully",
+      data: {
+        auction,
+        auctionSession,
+      },
+    });
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+
+    console.error("Complete Auction Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    await session.endSession();
+  }
 };
 
 module.exports = {
-    startAuction,
-    pauseAuction,
-    resumeAuction,
-    getAuctionSession,
-    startNextPlayer,
-    completeCurrentPlayer,
-    completeAuction,
+  startAuction,
+  pauseAuction,
+  resumeAuction,
+  getAuctionSession,
+  startNextPlayer,
+  completeCurrentPlayer,
+  completeAuction,
 };

@@ -6,18 +6,23 @@ const allowedMimeTypes = new Set(["image/jpeg", "image/png"]);
 const allowedExtensions = new Set([".jpg", ".jpeg", ".png"]);
 
 const fileFilter = (req, file, cb) => {
-    const extension = path.extname(file.originalname || "").toLowerCase();
-    if (!allowedMimeTypes.has(file.mimetype) || !allowedExtensions.has(extension)) {
-        return cb(new Error("Only JPG, JPEG and PNG image files are allowed"), false);
-    }
-    cb(null, true);
+  const extension = path.extname(file.originalname || "").toLowerCase();
+  if (
+    !allowedMimeTypes.has(file.mimetype) ||
+    !allowedExtensions.has(extension)
+  ) {
+    const error = new Error("Only JPG, JPEG and PNG image files are allowed");
+    error.statusCode = 400;
+    return cb(error, false);
+  }
+  cb(null, true);
 };
 
 module.exports = multer({
-    storage,
-    fileFilter,
-    limits: {
-        fileSize: 2 * 1024 * 1024,
-        files: 1,
-    },
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 2 * 1024 * 1024,
+    files: 1,
+  },
 });

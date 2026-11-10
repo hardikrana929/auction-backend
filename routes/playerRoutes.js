@@ -1,69 +1,66 @@
 const express = require("express");
+const router = express.Router();
+
 const upload = require("../middleware/uploadMiddleware");
 
 const {
-    createPlayer,
-    getPlayersByAuction,
-    getPlayerById,
-    updatePlayer,
-    updatePlayerStatus,
-    deletePlayer,
+  createPlayer,
+  getPlayersByAuction,
+  getPlayerById,
+  updatePlayer,
+  updatePlayerStatus,
+  deletePlayer,
 } = require("../controllers/playerController");
 
+const { protectRoute } = require("../middleware/authMiddleware");
+
 const {
-    protectRoute,
-    adminOnly,
-} = require("../middleware/authMiddleware");
+  requireAuctionManager,
+  requireAuctionViewer,
+} = require("../middleware/auctionScope");
 
-const router = express.Router();
-
-// GET PLAYERS OF AUCTION
 router.get(
-    "/auction/:auctionId",
-    protectRoute,
-    getPlayersByAuction
+  "/auction/:auctionId",
+  protectRoute,
+  requireAuctionViewer("auctionIdParam"),
+  getPlayersByAuction,
 );
 
-// GET SINGLE PLAYER
 router.get(
-    "/:id",
-    protectRoute,
-    getPlayerById
+  "/:id",
+  protectRoute,
+  requireAuctionViewer("playerParam"),
+  getPlayerById,
 );
 
-// CREATE PLAYER
 router.post(
-    "/",
-    protectRoute,
-    adminOnly,
-    upload.single("photo"),
-    createPlayer
+  "/",
+  protectRoute,
+  upload.single("photo"),
+  requireAuctionManager("auctionIdBody"),
+  createPlayer,
 );
 
-// UPDATE PLAYER
 router.put(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    upload.single("photo"),
-    updatePlayer
+  "/:id",
+  protectRoute,
+  requireAuctionManager("playerParam"),
+  upload.single("photo"),
+  updatePlayer,
 );
 
-// UPDATE PLAYER STATUS
 router.patch(
-    "/:id/status",
-    protectRoute,
-    adminOnly,
-    updatePlayerStatus
+  "/:id/status",
+  protectRoute,
+  requireAuctionManager("playerParam"),
+  updatePlayerStatus,
 );
-
-// DELETE PLAYER
 
 router.delete(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    deletePlayer
+  "/:id",
+  protectRoute,
+  requireAuctionManager("playerParam"),
+  deletePlayer,
 );
 
 module.exports = router;

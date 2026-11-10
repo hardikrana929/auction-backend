@@ -11,16 +11,28 @@ const { getExpectedMinimumBid } = require("./expectedBidAmount");
  * latestBid is the most recent persisted Bid for this player (or null).
  */
 function computeNextBid({ player, auction, latestBid = null }) {
-  const latestBidTeamId = latestBid?.team ? String(latestBid.team._id || latestBid.team) : null;
-  const openingBid = Math.max(Number(player?.basePrice || 0), Number(auction?.minimumBid || 0));
+  const latestBidTeamId = latestBid?.team
+    ? String(latestBid.team._id || latestBid.team)
+    : null;
+  const openingBid = Math.max(
+    Number(player?.basePrice || 0),
+    Number(auction?.minimumBid || 0),
+  );
 
   const currentBid = latestBid
     ? Number(latestBid.amount)
     : Number(player?.basePrice || auction?.minimumBid || 0);
 
-  const increment = getBidIncrement(currentBid, auction?.bidRules, auction?.bidIncrement);
+  const increment = getBidIncrement(
+    currentBid,
+    auction?.bidRules,
+    auction?.bidIncrement,
+  );
 
-  const plainPlayer = typeof player?.toObject === "function" ? player.toObject() : { ...(player || {}) };
+  const plainPlayer =
+    typeof player?.toObject === "function"
+      ? player.toObject()
+      : { ...(player || {}) };
   const nextBid = getExpectedMinimumBid({
     player: { ...plainPlayer, currentBidder: latestBidTeamId },
     auction,

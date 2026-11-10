@@ -22,44 +22,72 @@ const auctionAccessRoutes = require("./routes/auctionAccessRoutes");
 const notFound = require("./middleware/notFoundMiddleware");
 const errorHandler = require("./middleware/errorMiddleware");
 const initializeSocket = require("./socket/socketServer");
+const bootstrapAdmin = require("./utils/bootstrapAdmin");
+const { apiLimiter } = require("./middleware/rateLimiters");
 
 const app = express();
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; frame-ancestors 'none'",
+  );
+  if (process.env.NODE_ENV === "production")
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
+  next();
+});
 const server = http.createServer(app);
 
 // Vercel / Render put a proxy in front of the app. Without this, every visitor
 // looks like the same IP, so the rate limiters (login, forgot-password, OTP)
 // would block ALL users together after only a few requests.
 // Set TRUST_PROXY=0 to turn it off, or a number (hops) to change it.
-const trustProxy = process.env.TRUST_PROXY !== undefined
+const trustProxy =
+  process.env.TRUST_PROXY !== undefined
     ? Number(process.env.TRUST_PROXY)
-    : (process.env.NODE_ENV === "production" ? 1 : 0);
+    : process.env.NODE_ENV === "production" ||
+        process.env.RENDER ||
+        process.env.VERCEL
+      ? 1
+      : 0;
 app.set("trust proxy", Number.isNaN(trustProxy) ? 1 : trustProxy);
 
 const configuredOrigins = (process.env.CLIENT_URL || "")
-    .split(",")
-    .map((origin) => origin.trim().replace(/\/$/, ""))
-    .filter(Boolean);
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
 
-const allowedOrigins = [...new Set([
+const allowedOrigins = [
+  ...new Set([
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     ...configuredOrigins,
-])];
+  ]),
+];
 
 const corsOptions = {
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error("CORS origin not allowed"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    const error = new Error("CORS origin not allowed");
+    error.statusCode = 403;
+    return callback(error);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+app.use("/api", apiLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/auctions", auctionRoutes);
 app.use("/api/teams", teamRoutes);
@@ -74,7 +102,7 @@ app.use("/api/auction-notification", auctionNotificationRoutes);
 app.use("/api/auction-access", auctionAccessRoutes);
 
 app.get("/", (req, res) => {
-    res.status(200).json({ success: true, message: "Playing Cricket....." });
+  res.status(200).json({ success: true, message: "Playing Cricket....." });
 });
 
 app.use(notFound);
@@ -86,26 +114,27 @@ app.set("io", io);
 const PORT = Number(process.env.PORT) || 5000;
 
 const startServer = async () => {
-    try {
-        if (!process.env.JWT_SECRET) {
-            throw new Error("JWT_SECRET is not configured");
-        }
-        if (!process.env.MONGO_URI) {
-            throw new Error("MONGO_URI is not configured");
-        }
-
-        await connectDB();
-        server.listen(PORT, "0.0.0.0", () => {
-            console.log(`AuctionPro server running on port ${PORT}`);
-        });
-    } catch (error) {
-        console.error("Server startup error:", error);
-        process.exit(1);
+  try {
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not configured");
     }
+    if (!process.env.MONGO_URI) {
+      throw new Error("MONGO_URI is not configured");
+    }
+
+    await connectDB();
+    await bootstrapAdmin();
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`AuctionPro server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Server startup error:", error);
+    process.exit(1);
+  }
 };
 
 if (require.main === module) {
-    startServer();
+  startServer();
 }
 
 module.exports = app;

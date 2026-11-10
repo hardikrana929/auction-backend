@@ -1,20 +1,17 @@
 const express = require("express");
 
 const {
-    createNotification,
-    getMyNotifications,
-    getNotificationById,
-    markNotificationAsRead,
-    markAllNotificationsAsRead,
-    deleteNotification,
-    deleteReadNotifications,
-    getAuctionNotificationCount,
+  createNotification,
+  getMyNotifications,
+  getNotificationById,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  deleteNotification,
+  deleteReadNotifications,
+  getAuctionNotificationCount,
 } = require("../controllers/auctionNotificationController");
 
-const {
-    protectRoute,
-    adminOnly,
-} = require("../middleware/authMiddleware");
+const { protectRoute, adminOnly } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
@@ -58,6 +55,5 @@ router.put("/:notificationId/read", protectRoute, markNotificationAsRead);
 // DELETE /api/auction-notification/:notificationId
 
 router.delete("/:notificationId", protectRoute, deleteNotification);
-
 
 module.exports = router;

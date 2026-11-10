@@ -24,11 +24,23 @@ test("no approved teams means there is no next turn", () => {
   assert.equal(getNextTeamId([]), null);
 });
 test("turn state requires at least two approved teams", () => {
-  assert.equal(getTurnState([{ _id: "team-1", name: "One" }]).canStartBidding, false);
-  assert.equal(getTurnState([{ _id: "team-1" }, { _id: "team-2" }]).canStartBidding, true);
+  assert.equal(
+    getTurnState([{ _id: "team-1", name: "One" }]).canStartBidding,
+    false,
+  );
+  assert.equal(
+    getTurnState([{ _id: "team-1" }, { _id: "team-2" }]).canStartBidding,
+    true,
+  );
 });
 test("turn state includes next team's ID and name", () => {
-  const state = getTurnState([{ _id: "team-1", name: "One" }, { _id: "team-2", name: "Two" }], "team-1");
+  const state = getTurnState(
+    [
+      { _id: "team-1", name: "One" },
+      { _id: "team-2", name: "Two" },
+    ],
+    "team-1",
+  );
   assert.equal(state.nextTeamId, "team-2");
   assert.equal(state.nextTeam.name, "Two");
 });

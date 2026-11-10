@@ -1,42 +1,104 @@
-const rateLimit = require("express-rate-limit");
+const expressRateLimit = require("express-rate-limit");
 
-// Login: guards against credential stuffing / brute force.
-// Keyed by IP; tighten further (e.g. by IP+email) if you see abuse.
+const rateLimit = expressRateLimit.rateLimit || expressRateLimit;
+
+// Use the official IPv6-safe helper.
+const ipKeyGenerator =
+  expressRateLimit.ipKeyGenerator || ((ip) => ip || "unknown");
+
+const identifierKey = (req) =>
+  String(
+    req.body?.username || req.body?.email || req.body?.identifier || "unknown",
+  )
+    .trim()
+    .toLowerCase();
+
+// Login limiter: per IP + account.
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: "Too many login attempts. Please try again later." },
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}|${identifierKey(req)}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again later.",
+  },
 });
 
-// Register: prevents mass account creation from a single source.
+// Wider network-level login protection.
+const loginIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message:
+      "Too many login attempts from this network. Please try again later.",
+  },
+});
+
+// General API protection.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.API_RATE_LIMIT_MAX) || 3000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Bid protection: one limit per authenticated user.
+const bidLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) =>
+    req.user?._id ? String(req.user._id) : ipKeyGenerator(req.ip),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const registerLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: "Too many accounts created from this IP. Please try again later." },
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many accounts created from this IP. Please try again later.",
+  },
 });
 
-// Forgot password: this is the one that matters most — without it,
-// an attacker can spam any known email address with reset links.
 const forgotPasswordLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: "Too many requests. Please try again later." },
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests. Please try again later.",
+  },
 });
 
-// Verify OTP: on top of the per-code attempt limit (5 wrong tries), this
-// slows down anyone trying many e-mail addresses from one IP.
 const verifyOtpLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: "Too many attempts. Please try again later." },
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many attempts. Please try again later.",
+  },
 });
 
-module.exports = { loginLimiter, registerLimiter, forgotPasswordLimiter, verifyOtpLimiter };
+module.exports = {
+  loginLimiter,
+  loginIpLimiter,
+  apiLimiter,
+  bidLimiter,
+  registerLimiter,
+  forgotPasswordLimiter,
+  verifyOtpLimiter,
+};

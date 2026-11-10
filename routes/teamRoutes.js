@@ -1,75 +1,74 @@
 const express = require("express");
 const router = express.Router();
+
 const upload = require("../middleware/uploadMiddleware");
 
 const {
-    getTeamsByAuction,
-    getTeamById,
-    createTeam,
-    updateTeam,
-    updateTeamStatus,
-    deleteTeam,
+  getTeamsByAuction,
+  getTeamById,
+  createTeam,
+  updateTeam,
+  updateTeamStatus,
+  deleteTeam,
 } = require("../controllers/teamController");
 
+const { protectRoute } = require("../middleware/authMiddleware");
+
 const {
-    protectRoute,
-    adminOnly,
-} = require("../middleware/authMiddleware");
+  requireAuctionManager,
+  requireAuctionViewer,
+} = require("../middleware/auctionScope");
 
-/*
-|--------------------------------------------------------------------------
-| TEAM ROUTES
-|--------------------------------------------------------------------------
-| Base URL:
-| /api/teams
-|--------------------------------------------------------------------------
-*/
-
-/*
- * IMPORTANT:
- * Put /auction/:auctionId BEFORE /:id
- * so "auction" is not treated as a team ID.
- */
+// GET ALL TEAMS OF AN AUCTION
 router.get(
-    "/auction/:auctionId",
-    protectRoute,
-    getTeamsByAuction
+  "/auction/:auctionId",
+  protectRoute,
+  requireAuctionViewer("auctionIdParam"),
+  getTeamsByAuction,
 );
 
+// GET SINGLE TEAM
 router.get(
-    "/:id",
-    protectRoute,
-    getTeamById
+  "/:id",
+  protectRoute,
+  requireAuctionViewer("teamParam"),
+  getTeamById,
 );
 
+// CREATE TEAM
+// Multer must execute before auction scope because auctionId
+// comes through multipart/form-data.
 router.post(
-    "/",
-    protectRoute,
-    adminOnly,
-    upload.single("logo"),
-    createTeam
+  "/",
+  protectRoute,
+  upload.single("logo"),
+  requireAuctionManager("auctionIdBody"),
+  createTeam,
 );
 
+// UPDATE TEAM
 router.put(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    upload.single("logo"),
-    updateTeam
+  "/:id",
+  protectRoute,
+  requireAuctionManager("teamParam"),
+  upload.single("logo"),
+  updateTeam,
 );
 
+// UPDATE TEAM STATUS
 router.patch(
-    "/:id/status",
-    protectRoute,
-    adminOnly,
-    updateTeamStatus
+  "/:id/status",
+  protectRoute,
+  requireAuctionManager("teamParam"),
+  updateTeamStatus,
 );
 
+// DELETE TEAM
 router.delete(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    deleteTeam
+  "/:id",
+  protectRoute,
+  requireAuctionManager("teamParam"),
+  deleteTeam,
 );
 
 module.exports = router;

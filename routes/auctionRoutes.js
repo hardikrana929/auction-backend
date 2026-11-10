@@ -1,18 +1,18 @@
 const express = require("express");
 
 const {
-    createAuction,
-    getAllAuctions,
-    getAuctionById,
-    updateAuction,
-    updateAuctionStatus,
-    deleteAuction,
+  createAuction,
+  getAllAuctions,
+  getAuctionById,
+  updateAuction,
+  updateAuctionStatus,
+  deleteAuction,
+  getAuctionManager,
+  resetAuctionManager,
+  removeAuctionManager,
 } = require("../controllers/auctionController");
 
-const {
-    protectRoute,
-    adminOnly,
-} = require("../middleware/authMiddleware");
+const { protectRoute, adminOnly } = require("../middleware/authMiddleware");
 
 // Same multer instance already used elsewhere in the app (memory storage,
 // JPEG/PNG only, 2MB limit) — reused here so auction banners are validated
@@ -29,40 +29,35 @@ router.get("/", protectRoute, getAllAuctions);
 // Get single auction
 router.get("/:id", protectRoute, getAuctionById);
 
+// Auction manager credentials (admin only)
+router.get("/:id/manager", protectRoute, adminOnly, getAuctionManager);
+router.post("/:id/manager", protectRoute, adminOnly, resetAuctionManager);
+router.delete("/:id/manager", protectRoute, adminOnly, removeAuctionManager);
+
 // ADMIN ONLY
 
 // Create auction
 router.post(
-    "/",
-    protectRoute,
-    adminOnly,
-    upload.single("image"),
-    createAuction
+  "/",
+  protectRoute,
+  adminOnly,
+  upload.single("image"),
+  createAuction,
 );
 
 // Update auction
 router.put(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    upload.single("image"),
-    updateAuction
+  "/:id",
+  protectRoute,
+  adminOnly,
+  upload.single("image"),
+  updateAuction,
 );
 
 // Update auction status
-router.patch(
-    "/:id/status",
-    protectRoute,
-    adminOnly,
-    updateAuctionStatus
-);
+router.patch("/:id/status", protectRoute, adminOnly, updateAuctionStatus);
 
 // Delete auction
-router.delete(
-    "/:id",
-    protectRoute,
-    adminOnly,
-    deleteAuction
-);
+router.delete("/:id", protectRoute, adminOnly, deleteAuction);
 
 module.exports = router;

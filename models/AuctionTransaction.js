@@ -25,11 +25,7 @@ const auctionTransactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: [
-        "bid",
-        "sold",
-        "unsold",
-      ],
+      enum: ["bid", "sold", "unsold"],
       required: true,
     },
 
@@ -52,10 +48,7 @@ const auctionTransactionSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-module.exports = mongoose.model(
-  "AuctionTransaction",
-  auctionTransactionSchema
-);
+module.exports = mongoose.model("AuctionTransaction", auctionTransactionSchema);

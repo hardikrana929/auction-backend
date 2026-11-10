@@ -1,74 +1,71 @@
 const express = require("express");
 
 const {
-    startAuction,
-    pauseAuction,
-    resumeAuction,
-    getAuctionSession,
-    startNextPlayer,
-    completeCurrentPlayer,
-    completeAuction,
+  startAuction,
+  pauseAuction,
+  resumeAuction,
+  getAuctionSession,
+  startNextPlayer,
+  completeCurrentPlayer,
+  completeAuction,
 } = require("../controllers/auctionControlController");
 
+const { protectRoute } = require("../middleware/authMiddleware");
 const {
-    protectRoute,
-    adminOnly,
-} = require("../middleware/authMiddleware");
+  requireAuctionManager,
+  requireAuctionViewer,
+} = require("../middleware/auctionScope");
 
 const router = express.Router();
 
 // Start auction
 router.post(
-    "/start",
-    protectRoute,
-    adminOnly,
-    startAuction
+  "/start",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  startAuction,
 );
 
 // Pause auction
 router.post(
-    "/pause",
-    protectRoute,
-    adminOnly,
-    pauseAuction
+  "/pause",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  pauseAuction,
 );
 
 // Resume auction
 router.post(
-    "/resume",
-    protectRoute,
-    adminOnly,
-    resumeAuction
+  "/resume",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  resumeAuction,
 );
 
 // Get live auction session
-router.get(
-    "/session/:auctionId",
-    protectRoute,
-    getAuctionSession
-);
+router.get("/session/:auctionId", protectRoute, getAuctionSession);
 
 // Start next player
 router.post(
-    "/next-player",
-    protectRoute,
-    adminOnly,
-    startNextPlayer
+  "/next-player",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  startNextPlayer,
 );
 
 // Update current player session result
 router.post(
-    "/complete-player",
-    protectRoute,
-    adminOnly,
-    completeCurrentPlayer
+  "/complete-player",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  completeCurrentPlayer,
 );
 
 router.post(
-    "/complete",
-    protectRoute,
-    adminOnly,
-    completeAuction
+  "/complete",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  completeAuction,
 );
 
 module.exports = router;

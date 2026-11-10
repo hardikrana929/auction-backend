@@ -1,24 +1,21 @@
 const express = require("express");
 
-const router =
-    express.Router();
+const router = express.Router();
 
 const {
-    placeBid,
-    getCurrentBid,
-    getBidHistory,
-    sellPlayer,
-    markPlayerUnsold,
-} = require(
-    "../controllers/biddingController",
-);
+  placeBid,
+  getCurrentBid,
+  getBidHistory,
+  sellPlayer,
+  markPlayerUnsold,
+} = require("../controllers/biddingController");
 
+const { protectRoute } = require("../middleware/authMiddleware");
 const {
-    protectRoute,
-    adminOnly,
-} = require(
-    "../middleware/authMiddleware",
-);
+  requireAuctionManager,
+  requireAuctionViewer,
+} = require("../middleware/auctionScope");
+const { bidLimiter } = require("../middleware/rateLimiters");
 
 /*
 |--------------------------------------------------------------------------
@@ -26,11 +23,7 @@ const {
 |--------------------------------------------------------------------------
 */
 
-router.post(
-    "/place",
-    protectRoute,
-    placeBid,
-);
+router.post("/place", protectRoute, bidLimiter, placeBid);
 
 /*
 |--------------------------------------------------------------------------
@@ -39,9 +32,10 @@ router.post(
 */
 
 router.get(
-    "/current/:auctionId",
-    protectRoute,
-    getCurrentBid,
+  "/current/:auctionId",
+  protectRoute,
+  requireAuctionViewer("auctionIdParam"),
+  getCurrentBid,
 );
 
 /*
@@ -51,9 +45,10 @@ router.get(
 */
 
 router.get(
-    "/history/:playerId",
-    protectRoute,
-    getBidHistory,
+  "/history/:playerId",
+  protectRoute,
+  requireAuctionViewer("playerIdParam"),
+  getBidHistory,
 );
 
 /*
@@ -63,17 +58,17 @@ router.get(
 */
 
 router.post(
-    "/sell",
-    protectRoute,
-    adminOnly,
-    sellPlayer,
+  "/sell",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  sellPlayer,
 );
 
 router.post(
-    "/unsold",
-    protectRoute,
-    adminOnly,
-    markPlayerUnsold,
+  "/unsold",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  markPlayerUnsold,
 );
 
 module.exports = router;
