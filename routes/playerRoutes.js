@@ -12,12 +12,50 @@ const {
   deletePlayer,
 } = require("../controllers/playerController");
 
+const {
+  getRegistrationLink,
+  generateRegistrationLink,
+  setRegistrationOpen,
+  disableRegistrationLink,
+} = require("../controllers/playerRegistrationController");
+const { getMyAuctions } = require("../controllers/playerBrowseController");
+
 const { protectRoute } = require("../middleware/authMiddleware");
 
 const {
   requireAuctionManager,
   requireAuctionViewer,
 } = require("../middleware/auctionScope");
+
+// Auctions the current user may browse players for ("Players" tab).
+// Must stay above "/:id" so "my-auctions" is not treated as a player id.
+router.get("/my-auctions", protectRoute, getMyAuctions);
+
+// Shareable public "register as a player" link (admin / assigned manager).
+router.get(
+  "/registration-link/:auctionId",
+  protectRoute,
+  requireAuctionManager("auctionIdParam"),
+  getRegistrationLink,
+);
+router.post(
+  "/registration-link/:auctionId",
+  protectRoute,
+  requireAuctionManager("auctionIdParam"),
+  generateRegistrationLink,
+);
+router.patch(
+  "/registration-link/:auctionId",
+  protectRoute,
+  requireAuctionManager("auctionIdParam"),
+  setRegistrationOpen,
+);
+router.delete(
+  "/registration-link/:auctionId",
+  protectRoute,
+  requireAuctionManager("auctionIdParam"),
+  disableRegistrationLink,
+);
 
 router.get(
   "/auction/:auctionId",

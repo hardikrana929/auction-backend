@@ -160,6 +160,14 @@ const playerSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // How this player entered the auction pool: added by an admin/manager,
+    // or through the public shareable registration form.
+    registrationSource: {
+      type: String,
+      enum: ["admin", "self_registered"],
+      default: "admin",
+    },
   },
   {
     timestamps: true,

@@ -71,6 +71,20 @@ const registerLimiter = rateLimit({
   },
 });
 
+// Public self-registration form (no login). Generous enough for a whole
+// cricket club registering from one shared mobile-data IP, strict enough to
+// stop scripted spam.
+const playerRegistrationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.PLAYER_REGISTRATION_RATE_LIMIT_MAX) || 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many registrations from this network. Please try again later.",
+  },
+});
+
 const forgotPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -99,6 +113,7 @@ module.exports = {
   apiLimiter,
   bidLimiter,
   registerLimiter,
+  playerRegistrationLimiter,
   forgotPasswordLimiter,
   verifyOtpLimiter,
 };

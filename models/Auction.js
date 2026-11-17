@@ -112,6 +112,14 @@ const auctionSchema = new mongoose.Schema(
       default: "draft",
     },
 
+    /* Public "register as a player" link.
+       The token is an unguessable random string embedded in the shareable URL.
+       select:false keeps it out of every normal auction query/response, so it
+       is only ever returned to admins / the auction manager through the
+       dedicated /api/players/registration-link endpoints. */
+    playerRegistrationToken: { type: String, select: false },
+    playerRegistrationOpen: { type: Boolean, default: false },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -124,5 +132,6 @@ const auctionSchema = new mongoose.Schema(
 );
 
 auctionSchema.index({ accessCode: 1 }, { unique: true, sparse: true });
+auctionSchema.index({ playerRegistrationToken: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("Auction", auctionSchema);
