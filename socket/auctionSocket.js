@@ -15,6 +15,13 @@ const getTeamRoom = (teamId) => {
   return `team:${teamId}`;
 };
 
+// Public (no login) live screen room. It only ever receives a tiny
+// "public:update" ping; the page then re-reads GET /api/public/live/:id, which
+// returns just the player details and current bid.
+const getPublicRoom = (auctionId) => {
+  return `public:auction:${auctionId}`;
+};
+
 // Validate Auction Access
 const isValidAuctionId = (auctionId) => {
   return typeof auctionId === "string" && /^[a-fA-F0-9]{24}$/.test(auctionId);
@@ -143,7 +150,7 @@ const joinTeam = async (socket, teamId) => {
 
     if (
       socket.user.role !== "admin" &&
-      team.owner.toString() !== socket.user._id.toString()
+      String(team.owner || "") !== socket.user._id.toString()
     ) {
       socket.emit("team:error", {
         message: "Not authorized to join this team",
@@ -189,6 +196,28 @@ const leaveTeam = (socket, teamId) => {
   });
 };
 
+// Join the public live room (works without login)
+const joinPublicAuction = async (socket, auctionId) => {
+  try {
+    if (!isValidAuctionId(auctionId)) {
+      socket.emit("public:error", { message: "Invalid auction ID" });
+      return;
+    }
+
+    const auction = await Auction.findById(auctionId).select("status");
+    if (!auction || ["draft", "cancelled"].includes(auction.status)) {
+      socket.emit("public:error", { message: "Auction not found" });
+      return;
+    }
+
+    socket.join(getPublicRoom(auctionId));
+    socket.emit("public:joined", { success: true, auctionId });
+  } catch (error) {
+    console.error("Join Public Auction Socket Error:", error);
+    socket.emit("public:error", { message: "Unable to join live auction" });
+  }
+};
+
 // Register Socket Events
 const registerAuctionSocketEvents = (io, socket) => {
   // Keep authenticated users in a private notification room so
@@ -198,6 +227,16 @@ const registerAuctionSocketEvents = (io, socket) => {
   }
 
   console.log(`Socket connected: ${socket.id}`);
+
+  // Public live screen (anonymous visitors allowed)
+  socket.on("public:join", async (payload) => {
+    await joinPublicAuction(socket, payload?.auctionId);
+  });
+
+  socket.on("public:leave", (payload) => {
+    if (isValidAuctionId(payload?.auctionId))
+      socket.leave(getPublicRoom(payload.auctionId));
+  });
 
   // Join auction
   socket.on("auction:join", async (payload) => {
@@ -290,6 +329,15 @@ const emitNextPlayer = (io, auctionId, player) => {
   });
 };
 
+// Tell public viewers that something changed (they re-fetch the safe public state).
+const emitPublicUpdate = (io, auctionId, reason = "update") => {
+  if (!io || !auctionId) return;
+  io.to(getPublicRoom(auctionId)).emit("public:update", {
+    auctionId: String(auctionId),
+    reason,
+  });
+};
+
 const emitNewNotification = (io, userId, notification) => {
   io.to(`user:${userId}`).emit("notification:new", notification);
 };
@@ -299,6 +347,8 @@ module.exports = {
 
   getAuctionRoom,
   getTeamRoom,
+  getPublicRoom,
+  emitPublicUpdate,
 
   emitAuctionStarted,
   emitAuctionPaused,

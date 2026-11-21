@@ -112,6 +112,22 @@ const auctionSchema = new mongoose.Schema(
       default: "draft",
     },
 
+    /* How the next player is picked while the auction is running:
+       order  - by auctionOrder
+       manual - admin picks a player (by auction ID / from the list)
+       random - random player from those still available
+       Chosen when the auction is created and can be changed from the
+       auction-control dashboard. */
+    playerSelectionMode: {
+      type: String,
+      enum: ["order", "manual", "random"],
+      default: "order",
+    },
+
+    /* Last auction number handed out to a player ("Player ID" inside this
+       auction). Incremented atomically ($inc) so numbers never repeat. */
+    playerCounter: { type: Number, default: 0, min: 0 },
+
     /* Public "register as a player" link.
        The token is an unguessable random string embedded in the shareable URL.
        select:false keeps it out of every normal auction query/response, so it

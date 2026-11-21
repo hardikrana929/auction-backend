@@ -19,7 +19,14 @@ const initializeSocket = (httpServer, corsOrigin) => {
         socket.handshake.auth?.token ||
         (authHeader && authHeader.replace(/^Bearer\s+/i, ""));
 
-      if (!token) return next(new Error("Authentication required"));
+      // No token = a visitor on the public live screen. They are allowed to
+      // connect, but socket.user stays null so every authenticated handler
+      // (auction:join, team:join, ...) rejects them. They can only use
+      // "public:join", which exposes nothing beyond "something changed".
+      if (!token) {
+        socket.user = null;
+        return next();
+      }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.id).select(

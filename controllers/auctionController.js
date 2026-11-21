@@ -13,7 +13,12 @@ const {
   deleteFromCloudinary,
 } = require("../utils/cloudinaryUpload");
 const { validateImageBuffer } = require("../utils/imageValidation");
-const { canTransition } = require("../utils/auctionTransitions");
+const { canTransition, STATUSES } = require("../utils/auctionTransitions");
+const {
+  normalizeSelectionMode,
+  SELECTION_MODES,
+} = require("../utils/playerSelection");
+const { emitPublicUpdate } = require("../socket/auctionSocket");
 const provisionManager = require("../utils/provisionManager");
 
 const parseBidRules = (value) => {
@@ -61,7 +66,19 @@ const createAuction = asyncHandler(async (req, res) => {
       bidRules,
       maxTeams,
       maxPlayersPerTeam,
+      playerSelectionMode,
     } = req.body;
+
+    if (
+      playerSelectionMode !== undefined &&
+      playerSelectionMode !== "" &&
+      !SELECTION_MODES.includes(playerSelectionMode)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Player selection must be one of: ${SELECTION_MODES.join(", ")}`,
+      });
+    }
 
     // Required fields
     if (
@@ -184,18 +201,22 @@ const createAuction = asyncHandler(async (req, res) => {
       bidRules: parseBidRules(bidRules),
       maxTeams,
       maxPlayersPerTeam,
+      playerSelectionMode: normalizeSelectionMode(playerSelectionMode),
       status: "upcoming",
       createdBy: req.user._id,
     });
     let managerCredentials = null;
+    let managerError = null;
     if (String(req.body.assignManager ?? "true").toLowerCase() !== "false") {
       try {
         managerCredentials = await provisionManager(auction);
-      } catch (managerError) {
+      } catch (managerProvisionError) {
         console.error(
           "Manager provisioning failed; auction remains created:",
-          managerError.message,
+          managerProvisionError.message,
         );
+        managerError =
+          "Auction created, but the admin credentials could not be generated. Use the key button in Auction Management to create them.";
       }
     }
 
@@ -204,6 +225,7 @@ const createAuction = asyncHandler(async (req, res) => {
       message: "Auction created successfully",
       auction,
       ...(managerCredentials ? { managerCredentials } : {}),
+      ...(managerError ? { managerError } : {}),
     });
   } catch (error) {
     // The DB write failed after the banner was already uploaded —
@@ -343,6 +365,14 @@ const updateAuction = asyncHandler(async (req, res) => {
       auction[field] = req.body[field];
     }
   });
+  if (req.body.playerSelectionMode !== undefined) {
+    if (!SELECTION_MODES.includes(req.body.playerSelectionMode))
+      return res.status(400).json({
+        success: false,
+        message: `Player selection must be one of: ${SELECTION_MODES.join(", ")}`,
+      });
+    auction.playerSelectionMode = req.body.playerSelectionMode;
+  }
   if (req.body.teamBudget !== undefined) {
     auction.teamBudget = Number(req.body.teamBudget);
     // Keep older consumers compatible while they migrate to teamBudget.
@@ -445,30 +475,29 @@ const updateAuction = asyncHandler(async (req, res) => {
 });
 
 // UPDATE AUCTION STATUS
+//
+// The cycle draft -> upcoming -> live -> completed is NOT strict: any status
+// can be set from any other (e.g. completed -> upcoming, or re-opening a
+// completed auction as live). Two statuses still go through the
+// auction-control endpoints because they drive the live session:
+//   live      -> POST /api/auction-control/start     (also re-opens completed)
+//   completed -> POST /api/auction-control/complete  (when currently live)
 
 const updateAuctionStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
-  const allowedStatuses = [
-    "draft",
-    "upcoming",
-    "live",
-    "completed",
-    "cancelled",
-  ];
-
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid auction status",
-    });
-  }
-
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({
       success: false,
       message: "Invalid auction ID",
+    });
+  }
+
+  if (!STATUSES.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid auction status",
     });
   }
 
@@ -481,25 +510,42 @@ const updateAuctionStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  if (status === "live" || status === "completed") {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `Use the auction-control ${status === "live" ? "start" : "complete"} endpoint to set this status.`,
-      });
+  if (status === "live") {
+    return res.status(400).json({
+      success: false,
+      message: "Use the auction-control start endpoint to make an auction live.",
+    });
+  }
+  if (status === "completed" && auction.status === "live") {
+    return res.status(400).json({
+      success: false,
+      message:
+        "Use the auction-control complete endpoint to complete a live auction.",
+    });
   }
   if (!canTransition(auction.status, status)) {
-    return res
-      .status(400)
-      .json({
+    return res.status(400).json({
+      success: false,
+      message: `Auction is already ${auction.status}.`,
+    });
+  }
+
+  // Leaving "live" while a player is on the block would strand that player.
+  if (auction.status === "live") {
+    const onTheBlock = await Player.exists({ auction: id, status: "auctioning" });
+    if (onTheBlock) {
+      return res.status(409).json({
         success: false,
-        message: `Cannot change auction status from ${auction.status} to ${status}.`,
+        message:
+          "A player is currently being auctioned. Sell the player or mark them unsold first.",
       });
+    }
   }
 
   auction.status = status;
   await auction.save();
+
+  emitPublicUpdate(req.app.get("io"), auction._id, "status");
 
   res.status(200).json({
     success: true,

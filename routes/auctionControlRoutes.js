@@ -8,7 +8,9 @@ const {
   startNextPlayer,
   completeCurrentPlayer,
   completeAuction,
+  setSelectionMode,
 } = require("../controllers/auctionControlController");
+const { getControlDashboard } = require("../controllers/auctionDashboardController");
 
 const { protectRoute } = require("../middleware/authMiddleware");
 const {
@@ -66,6 +68,22 @@ router.post(
   protectRoute,
   requireAuctionManager("auctionIdBody"),
   completeAuction,
+);
+
+// How the next player is picked: order | manual | random
+router.post(
+  "/selection-mode",
+  protectRoute,
+  requireAuctionManager("auctionIdBody"),
+  setSelectionMode,
+);
+
+// Everything the admin control dashboard needs, in one request.
+router.get(
+  "/dashboard/:auctionId",
+  protectRoute,
+  requireAuctionManager("auctionIdParam"),
+  getControlDashboard,
 );
 
 module.exports = router;

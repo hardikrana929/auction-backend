@@ -16,10 +16,12 @@ const bidSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Admin-controlled bidding raises the price without naming a team; the
+    // team is filled in when the player is sold ("Buy Player").
     team: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Team",
-      required: true,
+      default: null,
       index: true,
     },
 

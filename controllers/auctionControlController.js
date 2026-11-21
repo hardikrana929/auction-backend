@@ -4,6 +4,12 @@ const Auction = require("../models/Auction");
 const Player = require("../models/Player");
 const AuctionSession = require("../models/AuctionSession");
 const AuctionRegistration = require("../models/AuctionRegistration");
+const { emitPublicUpdate } = require("../socket/auctionSocket");
+const {
+  pickNextPlayer,
+  normalizeSelectionMode,
+  SELECTION_MODES,
+} = require("../utils/playerSelection");
 
 // --------------------------------------------------
 // Helper: Get Socket.IO
@@ -54,22 +60,32 @@ const startAuction = async (req, res) => {
     // Validate status
     // ------------------------------------------
 
-    if (auction.status !== "upcoming" && auction.status !== "draft") {
-      throw new Error(
-        `Auction cannot be started from status: ${auction.status}`,
-      );
+    // The lifecycle is not strict any more: an auction can be (re)started from
+    // draft, upcoming, cancelled or even completed ("re-open"). Only an auction
+    // that is already live cannot be started again.
+    if (auction.status === "live") {
+      throw new Error("Auction is already live");
     }
+    const reopened = auction.status === "completed";
 
     // ------------------------------------------
-    // Count available players
+    // Count players
     // ------------------------------------------
 
+    // Icon players / team owners ("retained") are never auctioned.
     const totalPlayers = await Player.countDocuments({
+      auction: auctionId,
+      status: { $ne: "retained" },
+    }).session(session);
+
+    const availablePlayers = await Player.countDocuments({
       auction: auctionId,
       status: "available",
     }).session(session);
 
-    if (totalPlayers === 0) {
+    // A fresh start needs players to auction. A re-opened auction may have
+    // none left available (the admin may add players or roll back sales).
+    if (!reopened && availablePlayers === 0) {
       throw new Error("Cannot start auction without players");
     }
     // ------------------------------------------
@@ -130,6 +146,7 @@ const startAuction = async (req, res) => {
     auctionSession.startedAt = auctionSession.startedAt || new Date();
 
     auctionSession.totalPlayers = totalPlayers;
+    auctionSession.completedAt = null;
 
     auctionSession.lastAction = "auction_started";
 
@@ -176,11 +193,14 @@ const startAuction = async (req, res) => {
           currentPlayerIndex: auctionSession.currentPlayerIndex,
         },
       });
+      emitPublicUpdate(io, auctionId, "started");
     }
 
     return res.status(200).json({
       success: true,
-      message: "Auction started successfully",
+      message: reopened
+        ? "Auction re-opened and live again"
+        : "Auction started successfully",
       data: {
         auction,
         auctionSession,
@@ -269,6 +289,7 @@ const pauseAuction = async (req, res) => {
         status: "paused",
         pausedAt: auctionSession.pausedAt,
       });
+      emitPublicUpdate(io, auctionId, "paused");
     }
 
     return res.status(200).json({
@@ -365,6 +386,7 @@ const resumeAuction = async (req, res) => {
         status: "live",
         resumedAt: auctionSession.resumedAt,
       });
+      emitPublicUpdate(io, auctionId, "resumed");
     }
 
     return res.status(200).json({
@@ -502,19 +524,33 @@ const startNextPlayer = async (req, res) => {
     // "auctionOrder > currentPlayerIndex" filter skipped every player who had
     // the default order 0 (or the same order as the previous player), which
     // produced "No more players available" after the very first player.
-    const nextPlayer = await Player.findOne({
+    // The auction's selection mode decides who comes next:
+    //   order  -> lowest auctionOrder, manual -> the player the admin chose
+    //   (playerId / auctionNumber in the request), random -> any available one.
+    const availablePool = await Player.find({
       auction: auctionId,
       status: "available",
     })
-      .sort({
-        auctionOrder: 1,
-        createdAt: 1,
-      })
+      .select("_id auctionOrder auctionNumber createdAt")
+      .lean()
       .session(session);
 
-    if (!nextPlayer) {
-      throw new Error("No more players available");
+    const picked = pickNextPlayer({
+      mode: auction.playerSelectionMode,
+      available: availablePool,
+      selection: {
+        playerId: req.body.playerId,
+        auctionNumber: req.body.auctionNumber,
+      },
+    });
+
+    if (!picked.player) {
+      throw new Error(picked.error || "No more players available");
     }
+
+    const nextPlayer = await Player.findById(picked.player._id).session(
+      session,
+    );
 
     // ------------------------------------------
     // Start player
@@ -601,6 +637,7 @@ const startNextPlayer = async (req, res) => {
           isPaused: false,
         },
       });
+      emitPublicUpdate(io, auctionId, "next-player");
     }
 
     return res.status(200).json({
@@ -768,10 +805,13 @@ const completeAuction = async (req, res) => {
       status: "available",
     }).session(session);
 
-    if (remainingPlayers > 0) {
-      throw new Error(
+    if (remainingPlayers > 0 && !req.body.force) {
+      const error = new Error(
         `${remainingPlayers} player(s) still remain in the auction`,
       );
+      error.code = "REMAINING_PLAYERS";
+      error.remainingPlayers = remainingPlayers;
+      throw error;
     }
 
     // ------------------------------------------
@@ -822,6 +862,7 @@ const completeAuction = async (req, res) => {
         status: "completed",
         completedAt: new Date(),
       });
+      emitPublicUpdate(io, auctionId, "completed");
     }
 
     return res.status(200).json({
@@ -837,16 +878,58 @@ const completeAuction = async (req, res) => {
 
     console.error("Complete Auction Error:", error);
 
-    return res.status(400).json({
+    return res.status(error.code === "REMAINING_PLAYERS" ? 409 : 400).json({
       success: false,
       message: error.message,
+      ...(error.code
+        ? { code: error.code, remainingPlayers: error.remainingPlayers }
+        : {}),
     });
   } finally {
     await session.endSession();
   }
 };
 
+// ==================================================
+// CHANGE PLAYER SELECTION MODE (order | manual | random)
+// ==================================================
+
+const setSelectionMode = async (req, res) => {
+  try {
+    const { auctionId, mode } = req.body;
+
+    if (!SELECTION_MODES.includes(mode)) {
+      return res.status(400).json({
+        success: false,
+        message: `Mode must be one of: ${SELECTION_MODES.join(", ")}`,
+      });
+    }
+
+    const auction = await Auction.findByIdAndUpdate(
+      auctionId,
+      { $set: { playerSelectionMode: normalizeSelectionMode(mode) } },
+      { new: true },
+    ).select("playerSelectionMode");
+
+    if (!auction) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Auction not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Player selection set to ${auction.playerSelectionMode}`,
+      playerSelectionMode: auction.playerSelectionMode,
+    });
+  } catch (error) {
+    console.error("Set Selection Mode Error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 module.exports = {
+  setSelectionMode,
   startAuction,
   pauseAuction,
   resumeAuction,

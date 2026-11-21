@@ -20,7 +20,14 @@ const {
 } = require("../controllers/playerRegistrationController");
 const { getMyAuctions } = require("../controllers/playerBrowseController");
 
-const { protectRoute } = require("../middleware/authMiddleware");
+const {
+  getImportFormat,
+  downloadImportTemplate,
+  importPlayers,
+} = require("../controllers/playerImportController");
+const excelUpload = require("../middleware/excelUploadMiddleware");
+
+const { protectRoute, managerOrAdmin } = require("../middleware/authMiddleware");
 
 const {
   requireAuctionManager,
@@ -55,6 +62,23 @@ router.delete(
   protectRoute,
   requireAuctionManager("auctionIdParam"),
   disableRegistrationLink,
+);
+
+// Excel import (must stay above "/:id")
+router.get("/import/format", protectRoute, managerOrAdmin, getImportFormat);
+router.get(
+  "/import/template",
+  protectRoute,
+  managerOrAdmin,
+  downloadImportTemplate,
+);
+// Multer first: auctionId arrives in the multipart body.
+router.post(
+  "/import",
+  protectRoute,
+  excelUpload.single("file"),
+  requireAuctionManager("auctionIdBody"),
+  importPlayers,
 );
 
 router.get(

@@ -137,9 +137,29 @@ const playerSchema = new mongoose.Schema(
       default: null,
     },
 
+    // "Player ID" inside this auction (1, 2, 3...). Used for manual selection.
+    auctionNumber: { type: Number, min: 1 },
+
+    // auction - normal player that goes under the hammer
+    // icon    - icon player, attached directly to a team (not auctioned)
+    // owner   - team owner playing for the team (not auctioned)
+    category: {
+      type: String,
+      enum: ["auction", "icon", "owner"],
+      default: "auction",
+    },
+
+    // Team an icon player / team owner belongs to (category != auction).
+    team: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Team",
+      default: null,
+    },
+
+    // "retained" = icon player / team owner, already part of a team.
     status: {
       type: String,
-      enum: ["available", "auctioning", "sold", "unsold"],
+      enum: ["available", "auctioning", "sold", "unsold", "retained"],
       default: "available",
     },
 
@@ -181,6 +201,16 @@ playerSchema.index(
     partialFilterExpression: {
       status: "auctioning",
     },
+  },
+);
+
+// Auction numbers are unique per auction (players created before this field
+// existed simply have none).
+playerSchema.index(
+  { auction: 1, auctionNumber: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { auctionNumber: { $type: "number" } },
   },
 );
 

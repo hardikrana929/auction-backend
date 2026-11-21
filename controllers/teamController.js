@@ -13,44 +13,19 @@ const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 /*
- * The team owner is identified by email — the UI collects
- * "Owner name / Owner email / Owner phone" — but the account is now
- * required to already exist and be active.
- *
- * Previously a team could be created for ANY email: if no account existed,
- * one was silently created with a random password nobody was ever told,
- * so that owner could never log in normally, and (separately) any small
- * mismatch between that hidden account and the one the real owner later
- * registered with caused bidding to fail with a 403. Requiring a real,
- * already-registered account removes both problems: the email you type
- * here is always the account that will actually log in and bid.
+ * The owner e-mail is contact information only. It is NOT checked against our
+ * users: any valid e-mail can be typed. If an active (non auction-admin)
+ * account with that e-mail happens to exist it is linked as the team owner,
+ * otherwise the team simply has no linked account (owner = null).
  */
-const findOwnerOrExplain = async (ownerEmail) => {
+const findOwnerIfExists = async (ownerEmail) => {
   const email = ownerEmail.trim().toLowerCase();
-
   const user = await User.findOne({
     email,
     role: { $ne: "auction_manager" },
-  }).select("name email role isActive");
-
-  if (!user) {
-    const err = new Error(
-      `No account is registered with ${email}. Ask the team owner to create an account ` +
-        "at /register first (or register one for them), then create the team using that same email.",
-    );
-    err.statusCode = 404;
-    throw err;
-  }
-
-  if (!user.isActive) {
-    const err = new Error(
-      `The account for ${email} is deactivated and cannot own a team.`,
-    );
-    err.statusCode = 409;
-    throw err;
-  }
-
-  return user;
+    isActive: true,
+  }).select("_id");
+  return user || null;
 };
 
 const getTeamsByAuction = async (req, res) => {
@@ -149,7 +124,20 @@ const createTeam = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Auction not found" });
 
-    const ownerDoc = await findOwnerOrExplain(ownerEmail);
+    const ownerDoc = await findOwnerIfExists(ownerEmail);
+
+    // Teams created by an admin are approved straight away, so respect the
+    // auction's team limit here.
+    const approvedCount = await AuctionRegistration.countDocuments({
+      auction: auctionId,
+      status: "approved",
+    });
+    if (approvedCount >= Number(auctionDoc.maxTeams)) {
+      return res.status(409).json({
+        success: false,
+        message: `This auction is full (${approvedCount}/${auctionDoc.maxTeams} teams).`,
+      });
+    }
 
     // NOTE: this findOne is a best-effort pre-check only. The real
     // guarantee against duplicate team names now comes from the
@@ -179,7 +167,8 @@ const createTeam = async (req, res) => {
 
     const team = await Team.create({
       name: name.trim(),
-      owner: ownerDoc._id,
+      owner: ownerDoc?._id || null,
+      ownerEmail: ownerEmail.trim().toLowerCase(),
       ownerName: ownerName.trim(),
       // ownerPhone isn't in the Team or User schema yet — accepted
       // from the form but not persisted until one of those models
@@ -192,6 +181,20 @@ const createTeam = async (req, res) => {
       logo: logo || undefined,
       status: status || "active",
     });
+
+    // Admin-created teams do not need a separate approval step.
+    await AuctionRegistration.create({
+      auction: auctionId,
+      team: team._id,
+      registeredBy: req.user._id,
+      status: "approved",
+      approvedAt: new Date(),
+      approvedBy: req.user._id,
+    });
+    await Auction.updateOne(
+      { _id: auctionId },
+      { $inc: { approvedTeamsCount: 1 } },
+    );
 
     const populatedTeam = await Team.findById(team._id)
       .populate("auction", "name date status startingBudget teamBudget")
@@ -299,10 +302,8 @@ const updateTeam = async (req, res) => {
     }
     if (status !== undefined) updateData.status = status;
 
-    // Owner is re-resolved by email the same way createTeam does — the
-    // account must already exist (see findOwnerOrExplain above). This is
-    // also how an admin repairs a team whose owner account is wrong: edit
-    // the team and enter the owner's correct, already-registered email.
+    // Owner e-mail is contact information (not checked against our users).
+    // A matching account, if any, is linked; otherwise owner becomes null.
     if (ownerEmail !== undefined) {
       const auction = await Auction.findById(existingTeam.auction);
       if (["live", "completed"].includes(auction?.status))
@@ -316,8 +317,9 @@ const updateTeam = async (req, res) => {
         return res
           .status(400)
           .json({ success: false, message: "Invalid owner email" });
-      const ownerDoc = await findOwnerOrExplain(ownerEmail);
-      updateData.owner = ownerDoc._id;
+      const ownerDoc = await findOwnerIfExists(ownerEmail);
+      updateData.owner = ownerDoc?._id || null;
+      updateData.ownerEmail = String(ownerEmail).trim().toLowerCase();
     }
 
     // Budget is intentionally not client-updatable. It is controlled by auction/bidding logic.

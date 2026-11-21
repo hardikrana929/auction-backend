@@ -52,4 +52,12 @@ const adminOnly = (req, res, next) => {
   return res.status(403).json({ success: false, message: "Admin access only" });
 };
 
-module.exports = { protectRoute, adminOnly };
+// Super admin ("admin") or an admin assigned to an auction ("auction_manager").
+const managerOrAdmin = (req, res, next) => {
+  if (["admin", "auction_manager"].includes(req.user?.role)) return next();
+  return res
+    .status(403)
+    .json({ success: false, message: "Admin access only" });
+};
+
+module.exports = { protectRoute, adminOnly, managerOrAdmin };

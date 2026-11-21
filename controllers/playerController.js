@@ -2,6 +2,10 @@ const mongoose = require("mongoose");
 
 const Player = require("../models/Player");
 const Auction = require("../models/Auction");
+const Team = require("../models/Team");
+const AuctionSession = require("../models/AuctionSession");
+const { reserveAuctionNumbers } = require("../utils/playerNumbers");
+const { planCategoryChange } = require("../utils/playerCategory");
 
 const {
   uploadToCloudinary,
@@ -71,14 +75,11 @@ const createPlayer = async (req, res) => {
 
     // CHECK AUCTION STATUS
 
-    if (
-      auction.status === "live" ||
-      auction.status === "completed" ||
-      auction.status === "cancelled"
-    ) {
+    // Players can still be added while the auction is live or completed.
+    if (auction.status === "cancelled") {
       return res.status(400).json({
         success: false,
-        message: `Cannot add player to a ${auction.status} auction`,
+        message: "Cannot add player to a cancelled auction",
       });
     }
 
@@ -145,8 +146,11 @@ const createPlayer = async (req, res) => {
 
     // CREATE PLAYER
 
+    const auctionNumber = await reserveAuctionNumbers(auctionId, 1);
+
     const player = await Player.create({
       auction: auctionId,
+      auctionNumber,
 
       fullName: fullName.trim(),
       lastName: lastName.trim(),
@@ -188,6 +192,14 @@ const createPlayer = async (req, res) => {
     });
 
     uploadedPhotoPublicId = null;
+
+    // A player added during a live auction joins the running queue.
+    if (auction.status === "live") {
+      await AuctionSession.updateOne(
+        { auction: auctionId },
+        { $inc: { totalPlayers: 1 } },
+      );
+    }
     res
       .status(201)
       .json({ success: true, message: "Player created successfully", player });
@@ -236,6 +248,7 @@ const getPlayersByAuction = async (req, res) => {
 
     const players = await Player.find({ auction: auctionId })
       .populate("soldTo", "name logo")
+      .populate("team", "name logo")
       .sort({ auctionOrder: 1, createdAt: 1 });
     const safePlayers =
       req.user?.role === "admin" || req.user?.role === "auction_manager"
@@ -340,13 +353,24 @@ const updatePlayer = async (req, res) => {
       });
     }
 
-    // PREVENT UPDATE AFTER AUCTION STARTS
-
-    if (auction.status === "live" || auction.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot update player during ${auction.status} auction`,
-      });
+    // Profiles can be edited at any time. A player who is on the block or
+    // already sold keeps his price / order / category (use roll back first).
+    const lockedPlayer = ["auctioning", "sold"].includes(player.status);
+    if (
+      lockedPlayer &&
+      ["basePrice", "auctionOrder"].some((key) => req.body[key] !== undefined)
+    ) {
+      const changed =
+        (req.body.basePrice !== undefined &&
+          Number(req.body.basePrice) !== Number(player.basePrice)) ||
+        (req.body.auctionOrder !== undefined &&
+          Number(req.body.auctionOrder) !== Number(player.auctionOrder));
+      if (changed) {
+        return res.status(400).json({
+          success: false,
+          message: `Base price and order cannot be changed while the player is ${player.status}`,
+        });
+      }
     }
 
     // PERSONAL INFORMATION
@@ -468,6 +492,39 @@ const updatePlayer = async (req, res) => {
       player.auctionOrder = req.body.auctionOrder;
     }
 
+    // CATEGORY (auction / icon player / team owner) + TEAM
+    let categoryPlan = null;
+    if (req.body.category !== undefined || req.body.teamId !== undefined) {
+      categoryPlan = planCategoryChange(player, {
+        category: req.body.category || undefined,
+        teamId: req.body.teamId || undefined,
+      });
+      if (categoryPlan.error) {
+        return res
+          .status(400)
+          .json({ success: false, message: categoryPlan.error });
+      }
+      if (categoryPlan.pushToTeam) {
+        const target = await Team.findById(categoryPlan.pushToTeam);
+        if (!target || String(target.auction) !== String(player.auction)) {
+          return res.status(400).json({
+            success: false,
+            message: "Team does not belong to this auction",
+          });
+        }
+        if (
+          Number(auction.maxPlayersPerTeam) > 0 &&
+          (target.players || []).length >= Number(auction.maxPlayersPerTeam)
+        ) {
+          return res.status(409).json({
+            success: false,
+            message: `${target.name} already has a full squad`,
+          });
+        }
+      }
+      Object.assign(player, categoryPlan.changes);
+    }
+
     if (req.file) {
       const result = await uploadToCloudinary(
         req.file.buffer,
@@ -477,6 +534,28 @@ const updatePlayer = async (req, res) => {
       player.photo = { url: result.secure_url, publicId: result.public_id };
     }
     await player.save();
+
+    if (categoryPlan) {
+      if (categoryPlan.pullFromTeam)
+        await Team.updateOne(
+          { _id: categoryPlan.pullFromTeam },
+          { $pull: { players: player._id } },
+        );
+      if (categoryPlan.pushToTeam)
+        await Team.updateOne(
+          { _id: categoryPlan.pushToTeam },
+          { $addToSet: { players: player._id } },
+        );
+      // Moving an icon player back to the pool adds him to a live queue.
+      if (
+        categoryPlan.changes.status === "available" &&
+        auction.status === "live"
+      )
+        await AuctionSession.updateOne(
+          { auction: auction._id },
+          { $inc: { totalPlayers: 1 } },
+        );
+    }
     if (oldPhotoPublicId) {
       try {
         await deleteFromCloudinary(oldPhotoPublicId);
@@ -561,11 +640,23 @@ const updatePlayerStatus = async (req, res) => {
       });
     }
 
-    if (auction.status === "live" || auction.status === "completed") {
+    if (player.status === "retained") {
       return res.status(400).json({
         success: false,
-        message: `Cannot manually change player status during a ${auction.status} auction`,
+        message:
+          "Icon players and team owners are not auctioned. Change their category instead.",
       });
+    }
+
+    // During a live / completed auction the only manual move allowed is putting
+    // an unsold player back into the pool so he can be auctioned again.
+    if (auction.status === "live" || auction.status === "completed") {
+      if (!(status === "available" && player.status === "unsold")) {
+        return res.status(400).json({
+          success: false,
+          message: `During a ${auction.status} auction only an unsold player can be moved back to available`,
+        });
+      }
     }
 
     player.status = status;
@@ -621,12 +712,11 @@ const deletePlayer = async (req, res) => {
       });
     }
 
-    // Don't delete after auction starts
-
-    if (auction.status === "live" || auction.status === "completed") {
+    // A player on the block or already sold is part of the auction record.
+    if (["auctioning", "sold"].includes(player.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot delete player from a ${auction.status} auction`,
+        message: `Cannot delete a ${player.status} player`,
       });
     }
     if (player.photo?.publicId) {
@@ -638,6 +728,18 @@ const deletePlayer = async (req, res) => {
     }
 
     await Player.findByIdAndDelete(id);
+
+    if (player.status === "retained" && player.team) {
+      await Team.updateOne(
+        { _id: player.team },
+        { $pull: { players: player._id } },
+      );
+    } else if (auction.status === "live") {
+      await AuctionSession.updateOne(
+        { auction: auction._id, totalPlayers: { $gt: 0 } },
+        { $inc: { totalPlayers: -1 } },
+      );
+    }
 
     res.status(200).json({
       success: true,

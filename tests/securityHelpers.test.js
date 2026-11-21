@@ -9,10 +9,13 @@ const {
   placeholderEmail,
 } = require("../utils/credentials");
 const { planRequeue } = require("../utils/requeuePlan");
-test("auction status transitions allow only draft/upcoming/cancelled transitions", () => {
+test("auction status transitions are not strict (any status to any other)", () => {
   assert.equal(canTransition("draft", "upcoming"), true);
-  assert.equal(canTransition("live", "completed"), false);
-  assert.equal(canTransition("completed", "draft"), false);
+  assert.equal(canTransition("live", "completed"), true);
+  assert.equal(canTransition("completed", "live"), true);
+  assert.equal(canTransition("completed", "draft"), true);
+  assert.equal(canTransition("live", "live"), false);
+  assert.equal(canTransition("draft", "bogus"), false);
 });
 test("ObjectId validator accepts only 24 hex strings", () => {
   assert.equal(isObjectId("0123456789abcdef01234567"), true);

@@ -57,10 +57,21 @@ const teamSchema = new mongoose.Schema(
       enum: ["active", "inactive"],
       default: "active",
     },
+    // Linked account of the owner. OPTIONAL: the owner e-mail is no longer
+    // required to belong to a registered user - it is only stored as contact
+    // information (ownerEmail). If an account with that e-mail exists it is
+    // linked here, otherwise this stays null.
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
+    },
+
+    ownerEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: "",
     },
   },
   {

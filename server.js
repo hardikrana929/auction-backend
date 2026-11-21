@@ -20,6 +20,7 @@ const auctionValidationRoutes = require("./routes/auctionValidationRoutes");
 const auctionNotificationRoutes = require("./routes/auctionNotificationRoutes");
 const auctionAccessRoutes = require("./routes/auctionAccessRoutes");
 const publicPlayerRegistrationRoutes = require("./routes/publicPlayerRegistrationRoutes");
+const publicLiveRoutes = require("./routes/publicLiveRoutes");
 const notFound = require("./middleware/notFoundMiddleware");
 const errorHandler = require("./middleware/errorMiddleware");
 const initializeSocket = require("./socket/socketServer");
@@ -102,6 +103,7 @@ app.use("/api/auction-validation", auctionValidationRoutes);
 app.use("/api/auction-notification", auctionNotificationRoutes);
 app.use("/api/auction-access", auctionAccessRoutes);
 app.use("/api/public/player-registration", publicPlayerRegistrationRoutes);
+app.use("/api/public/live", publicLiveRoutes);
 
 app.get("/", (req, res) => {
   res.status(200).json({ success: true, message: "Playing Cricket....." });

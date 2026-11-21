@@ -85,6 +85,19 @@ const playerRegistrationLimiter = rateLimit({
   },
 });
 
+// Public live screen: many viewers may share one network (a hall / ground), and
+// every viewer polls as a fallback to the socket, so this is generous.
+const publicLiveLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.PUBLIC_LIVE_RATE_LIMIT_MAX) || 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests. Please slow down.",
+  },
+});
+
 const forgotPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -114,6 +127,7 @@ module.exports = {
   bidLimiter,
   registerLimiter,
   playerRegistrationLimiter,
+  publicLiveLimiter,
   forgotPasswordLimiter,
   verifyOtpLimiter,
 };

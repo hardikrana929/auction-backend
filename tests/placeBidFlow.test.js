@@ -182,8 +182,11 @@ function seed({
   db.auctionSession = { isPaused: false };
   emitted.length = 0;
   return {
-    A: { user: { _id: users[0], role: "user" }, team: db.teams[0] },
-    B: { user: { _id: users[1], role: "user" }, team: db.teams[1] },
+    // Bidding is admin-controlled now: bids are placed by an admin on behalf of a team.
+    A: { user: { _id: users[0], role: "admin" }, team: db.teams[0] },
+    B: { user: { _id: users[1], role: "admin" }, team: db.teams[1] },
+    // A normal team owner (not allowed to bid any more)
+    owner: { user: { _id: users[0], role: "user" }, team: db.teams[0] },
   };
 }
 
@@ -212,10 +215,17 @@ test("first bid at opening price succeeds and returns nextBid", async () => {
   assert.equal(emitted[0][1].nextBid, 15000);
 });
 
-test("bid without teamId is resolved from the logged-in owner", async () => {
+test("team owners (role user) cannot bid - admin controls bidding", async () => {
+  const { owner } = seed();
+  const res = await bid(owner, 10000);
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body.message, /controlled by the auction admin/i);
+});
+
+test("admin bid without a teamId is rejected", async () => {
   const { A } = seed();
   const res = await bid(A, 10000, false);
-  assert.equal(res.statusCode, 201, JSON.stringify(res.body));
+  assert.equal(res.statusCode, 400);
 });
 
 test("same team cannot bid twice in a row (409)", async () => {
@@ -264,21 +274,6 @@ test("insufficient budget => 400", async () => {
   const res = await bid(A, 10000);
   assert.equal(res.statusCode, 400);
   assert.match(res.body.message, /budget/i);
-});
-
-test("a user cannot bid for another user's team", async () => {
-  const { A, B } = seed();
-  const r = makeRes();
-  await placeBid(
-    makeReq(A.user, {
-      auctionId: String(db.auction._id),
-      playerId: String(db.player._id),
-      teamId: String(B.team._id),
-      amount: 10000,
-    }),
-    r,
-  );
-  assert.equal(r.statusCode, 403);
 });
 
 test("getCurrentBid no longer crashes and returns server-computed nextBid", async () => {

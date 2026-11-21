@@ -25,7 +25,7 @@ const auctionTransactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["bid", "sold", "unsold"],
+      enum: ["bid", "sold", "unsold", "rollback", "bid_undo"],
       required: true,
     },
 

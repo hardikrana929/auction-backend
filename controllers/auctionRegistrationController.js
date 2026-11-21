@@ -57,7 +57,7 @@ const registerTeam = async (req, res) => {
 
     if (
       req.user.role !== "admin" &&
-      team.owner.toString() !== req.user._id.toString()
+      String(team.owner || "") !== req.user._id.toString()
     ) {
       return res.status(403).json({
         success: false,

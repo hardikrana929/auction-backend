@@ -26,18 +26,20 @@ const validateAuctionStart = async (req, res) => {
     const warnings = [];
 
     // Auction status
-    if (!["draft", "upcoming"].includes(auction.status)) {
-      errors.push(
-        `Auction cannot be started because its status is "${auction.status}"`,
-      );
+    // Not a strict cycle any more: completed / cancelled auctions can go live
+    // again. Only an auction that is already live cannot be started.
+    if (auction.status === "live") {
+      errors.push("Auction is already live");
     }
+    const reopening = auction.status === "completed";
 
     // Players
     const totalPlayers = await Player.countDocuments({
       auction: auctionId,
     });
 
-    if (totalPlayers === 0) {
+    // A re-opened auction may have no players left to auction.
+    if (totalPlayers === 0 && !reopening) {
       errors.push("Auction must have at least one player");
     }
 
